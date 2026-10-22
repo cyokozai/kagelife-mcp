@@ -1,0 +1,14 @@
+# ビルド成果物
+/kagelife-mcp
+/dist/
+*.test
+*.out
+
+# OS / エディタ
+.DS_Store
+*.swp
+*.swo
+
+# シークレット類
+.env
+.env.*
