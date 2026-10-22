@@ -9,6 +9,8 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/netip"
+	"net/url"
 	"os"
 	"path/filepath"
 	"syscall"
@@ -37,6 +39,8 @@ type endpoint struct {
 	PID       int    `json:"pid"`
 	ShaderDir string `json:"shader_dir"`
 	Version   int    `json:"version"`
+
+	addrPort netip.AddrPort // Addr を checkLoopback で解析した値。URL はこれから組み立てる
 }
 
 // apiError は制御口のエラー共通形。
@@ -72,20 +76,26 @@ func discoveryPath(override string) (string, error) {
 	return filepath.Join(dir, "kagelife", "control.json"), nil
 }
 
-// checkLoopback は addr がループバックの host:port であることを確かめる。
-func checkLoopback(addr string) error {
-	host, port, err := net.SplitHostPort(addr)
-	if err != nil || port == "" {
-		return fmt.Errorf("refusing control address %q: not a loopback host:port", addr)
+// checkLoopback は addr がループバックの IP リテラルと 0 以外の数字の port であることを確かめ、
+// 解析済みの値を返す。GUI は待受の IP リテラルをそのまま書く（ADR-006 補足 9）ので、
+// ホスト名（localhost を含む）や zone 付きの IPv6 は受け付けない。
+// net.SplitHostPort は port が数字かを確かめず、"127.0.0.1:80@evil.example" を通してしまうため使わない。
+func checkLoopback(addr string) (netip.AddrPort, error) {
+	ap, err := netip.ParseAddrPort(addr)
+	if err != nil || !ap.Addr().IsLoopback() || ap.Addr().Zone() != "" || ap.Port() == 0 {
+		return netip.AddrPort{}, fmt.Errorf("refusing control address %q: only a loopback IP literal with a port (e.g. 127.0.0.1:12345) is allowed", addr)
 	}
-	if host == "localhost" {
-		return nil
+	return ap, nil
+}
+
+// controlURL は解析済みのアドレスと path（シェーダ名は PathEscape 済み）から URL を組み立てる。
+func controlURL(ap netip.AddrPort, path string) (string, error) {
+	p, err := url.PathUnescape(path)
+	if err != nil {
+		return "", fmt.Errorf("invalid request path %q: %w", path, err)
 	}
-	ip := net.ParseIP(host)
-	if ip == nil || !ip.IsLoopback() {
-		return fmt.Errorf("refusing control address %q: only loopback addresses (127.0.0.1) are allowed", addr)
-	}
-	return nil
+	u := url.URL{Scheme: "http", Host: ap.String(), Path: p, RawPath: path}
+	return u.String(), nil
 }
 
 // client は制御口への HTTP クライアント。呼び出しごとに発見ファイルを読み直す。
@@ -121,9 +131,11 @@ func (c *client) discover() (endpoint, error) {
 	if ep.Version != controlVersion {
 		return endpoint{}, fmt.Errorf("version mismatch: kagelife and kagelife-mcp are not compatible (control file version %d, kagelife-mcp supports version %d). Update kagelife or kagelife-mcp so that they match", ep.Version, controlVersion)
 	}
-	if err := checkLoopback(ep.Addr); err != nil {
+	ap, err := checkLoopback(ep.Addr)
+	if err != nil {
 		return endpoint{}, err
 	}
+	ep.addrPort = ap
 	return ep, nil
 }
 
@@ -142,7 +154,11 @@ func (c *client) do(ctx context.Context, method, path string, body, out any) err
 		}
 		rd = bytes.NewReader(b)
 	}
-	req, err := http.NewRequestWithContext(ctx, method, "http://"+ep.Addr+path, rd)
+	u, err := controlURL(ep.addrPort, path)
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequestWithContext(ctx, method, u, rd)
 	if err != nil {
 		return err
 	}

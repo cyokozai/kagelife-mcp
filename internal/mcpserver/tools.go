@@ -88,6 +88,14 @@ func describeErr(err error) string {
 		return head + "\nCall list_shaders to see the available shader names. " +
 			"A shader that is listed but failed to compile is also not_found for switch_shader and crossfade: " +
 			"call get_state and read last_error, then fix it with write_shader."
+	case ae.Code == "invalid_name":
+		return head + "\nShader names must match ^[a-z0-9][a-z0-9_-]{0,63}$: lower-case letters, digits, _ and -, " +
+			"starting with a letter or digit, at most 64 characters, without the .kage extension (e.g. 10_plasma). " +
+			"Call list_shaders to check the exact name, then call the tool again."
+	case ae.Code == "invalid_beats":
+		return head + "\nbeats must satisfy 0 < beats <= 64, or omit beats to use the current default fade length shown by get_state."
+	case ae.Code == "invalid_bpm":
+		return head + "\nbpm must be between 40 and 300. Call set_bpm again with a value in that range."
 	case ae.Code == "unit_pixels_required":
 		return head + "\nThe source must include the line `//kage:unit pixels` (put it at the very top, before `package main`). Add it and call write_shader again."
 	case ae.Code == "invalid_request":

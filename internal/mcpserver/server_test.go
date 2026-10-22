@@ -3,6 +3,7 @@ package mcpserver
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"path/filepath"
 	"slices"
@@ -181,12 +182,69 @@ func TestRejectsNonLoopbackAddr(t *testing.T) {
 	}
 }
 
-func TestAcceptsIPv6Loopback(t *testing.T) {
-	if got := checkLoopback("[::1]:1234"); got != nil {
-		t.Fatalf("[::1] rejected: %v", got)
+// 発見ファイルの addr は GUI が書くループバックの IP リテラルと数字の port に限る
+// （ADR-006 補足 9。GUI も localhost を受け付けない）。
+func TestCheckLoopback(t *testing.T) {
+	for _, addr := range []string{"127.0.0.1:1234", "[::1]:1234", "127.0.0.2:1234"} {
+		if _, err := checkLoopback(addr); err != nil {
+			t.Errorf("%q rejected: %v", addr, err)
+		}
 	}
-	if got := checkLoopback("localhost:1234"); got != nil {
-		t.Fatalf("localhost rejected: %v", got)
+	for _, addr := range []string{
+		"127.0.0.1:80@evil.example", // userinfo 経由で別ホストへ向く
+		"127.0.0.1:abc",
+		"127.0.0.1:0",
+		"localhost:1234",
+		"evil.example:80",
+		"[fe80::1%eth0]:80",
+		"127.0.0.1:1234/x",
+	} {
+		if _, err := checkLoopback(addr); err == nil {
+			t.Errorf("%q accepted", addr)
+		}
+	}
+}
+
+// 発見ファイルに悪性の addr を書かれても、トークンを他のホストへ送らない。
+// 旧実装では "http://"+addr+path が evil.example をホストと解釈し、Bearer トークンを送っていた。
+// 実際のネットワークには出さず、送ろうとした要求を RoundTripper で記録して確かめる。
+func TestMaliciousAddrDoesNotLeakToken(t *testing.T) {
+	p := writeDiscoveryFile(t, t.TempDir(), "127.0.0.1:80@evil.example", "secret-token")
+	var sent []string
+	c := &client{controlFile: p, http: &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		sent = append(sent, r.URL.Host+" "+r.Header.Get("Authorization"))
+		return nil, errors.New("blocked by test")
+	})}}
+	err := c.do(context.Background(), http.MethodGet, "/v1/state", nil, nil)
+	if err == nil || !strings.Contains(err.Error(), "loopback") {
+		t.Fatalf("want loopback error, got %v", err)
+	}
+	if len(sent) != 0 {
+		t.Fatalf("request was sent: %v", sent)
+	}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+// URL は解析済みのアドレスから組み立て、PathEscape 済みの名前を二重にエスケープしない。
+func TestControlURL(t *testing.T) {
+	ap, err := checkLoopback("[::1]:1234")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for path, want := range map[string]string{
+		"/v1/state":                  "http://[::1]:1234/v1/state",
+		shaderPath("01_uv"):          "http://[::1]:1234/v1/shaders/01_uv",
+		shaderPath("../x"):           "http://[::1]:1234/v1/shaders/..%2Fx",
+		shaderPath("a b"):            "http://[::1]:1234/v1/shaders/a%20b",
+		shaderPath("x@evil.example"): "http://[::1]:1234/v1/shaders/x@evil.example",
+	} {
+		got, err := controlURL(ap, path)
+		if err != nil || got != want {
+			t.Errorf("controlURL(%q) = %q, %v; want %q", path, got, err, want)
+		}
 	}
 }
 
@@ -640,6 +698,31 @@ func TestWriteShaderCreatedMentionsEmptyScreenException(t *testing.T) {
 	txt := mustOK(t, cs, "write_shader", map[string]any{"name": "03_new", "source": "//kage:unit pixels\npackage main\n"})
 	// 表示中のシェーダが無ければ PUT の成功で表示される（ADR-006 補足 14）。
 	wantContains(t, txt, "nothing was on screen")
+}
+
+// 400 の検証エラーには、次に何をすればよいかを添える。制御口の message に頼らず
+// 中継側の文面で固定するため、message は短いものを返す。
+func TestValidationErrorHints(t *testing.T) {
+	cases := []struct {
+		code, tool string
+		args       map[string]any
+		want       []string
+	}{
+		{"invalid_name", "switch_shader", map[string]any{"name": "01_uv"},
+			[]string{"invalid_name", "^[a-z0-9][a-z0-9_-]{0,63}$", "64", ".kage", "list_shaders"}},
+		{"invalid_beats", "crossfade", map[string]any{"name": "01_uv", "beats": 8},
+			[]string{"invalid_beats", "0 < beats <= 64", "omit"}},
+		{"invalid_bpm", "set_bpm", map[string]any{"bpm": 128},
+			[]string{"invalid_bpm", "40", "300"}},
+	}
+	for _, c := range cases {
+		f, cs := setup(t)
+		f.setOverride(func(w http.ResponseWriter, _ *http.Request) {
+			writeFakeErr(w, http.StatusBadRequest, c.code, "x")
+		})
+		txt := mustErr(t, cs, c.tool, c.args)
+		wantContains(t, txt, c.want...)
+	}
 }
 
 func TestKageGuideSaysBeatRunsAtDefaultBPM(t *testing.T) {
