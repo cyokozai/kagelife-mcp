@@ -18,16 +18,17 @@ type fakeControl struct {
 	srv   *httptest.Server
 	token string
 
-	mu       sync.Mutex
-	active   string
-	order    []string
-	sources  map[string]string
-	bpm      float64
-	beats    float64
-	fading   bool
-	target   string
-	lastErr  map[string]string
-	requests []string // "METHOD /path" の記録
+	mu          sync.Mutex
+	active      string
+	order       []string
+	sources     map[string]string
+	bpm         float64 // 常に 40〜300。タップ前は既定の 120（ADR-006、ADR-008 D3）
+	bpmMeasured bool    // bpm がタップか set_bpm で設定された値なら true
+	beats       float64
+	fading      bool
+	target      string
+	lastErr     map[string]string
+	requests    []string // "METHOD /path" の記録
 
 	// override が非 nil なら全リクエストをこれで処理する（異常系の注入用）。
 	override http.HandlerFunc
@@ -132,6 +133,22 @@ func writeFakeErr(w http.ResponseWriter, status int, code, msg string) {
 	writeFakeJSON(w, status, map[string]any{"error": code, "message": msg})
 }
 
+// decodeStrict は本文を v に読み込み、未知のフィールドがあれば 400 invalid_request を返す
+// （#24 でマージ前に入る制御口の厳格なデコードに合わせる。クライアントの送りすぎを検出する）。
+func decodeStrict(w http.ResponseWriter, r *http.Request, v any) bool {
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(v); err != nil {
+		writeFakeErr(w, http.StatusBadRequest, "invalid_request", "request body must be a JSON object: "+err.Error())
+		return false
+	}
+	return true
+}
+
+func notLoaded(name string) string {
+	return "shader " + name + " is not loaded (missing, or its last compile failed; see last_error in GET /v1/state)"
+}
+
 func (f *fakeControl) state(w http.ResponseWriter, _ *http.Request) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -140,7 +157,7 @@ func (f *fakeControl) state(w http.ResponseWriter, _ *http.Request) {
 		le = f.lastErr
 	}
 	writeFakeJSON(w, http.StatusOK, map[string]any{
-		"active": f.active, "shaders": f.order, "bpm": f.bpm,
+		"active": f.active, "shaders": f.order, "bpm": f.bpm, "bpm_measured": f.bpmMeasured,
 		"fade":       map[string]any{"fading": f.fading, "target": f.target, "mix": 0.25, "beats": f.beats},
 		"fps":        59.9,
 		"resolution": []int{1280, 720},
@@ -169,8 +186,11 @@ func (f *fakeControl) putShader(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Source *string `json:"source"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Source == nil {
-		writeFakeErr(w, http.StatusBadRequest, "invalid_request", "body must be JSON with a source field")
+	if !decodeStrict(w, r, &req) {
+		return
+	}
+	if req.Source == nil {
+		writeFakeErr(w, http.StatusBadRequest, "invalid_request", "missing required field: source")
 		return
 	}
 	body := struct{ Source string }{*req.Source}
@@ -207,11 +227,13 @@ func (f *fakeControl) switchShader(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Name string `json:"name"`
 	}
-	_ = json.NewDecoder(r.Body).Decode(&body)
+	if !decodeStrict(w, r, &body) {
+		return
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if _, ok := f.sources[body.Name]; !ok {
-		writeFakeErr(w, http.StatusNotFound, "not_found", "shader "+body.Name+" not found")
+		writeFakeErr(w, http.StatusNotFound, "not_found", notLoaded(body.Name))
 		return
 	}
 	f.active = body.Name
@@ -219,12 +241,18 @@ func (f *fakeControl) switchShader(w http.ResponseWriter, r *http.Request) {
 }
 
 func (f *fakeControl) crossfade(w http.ResponseWriter, r *http.Request) {
-	var body map[string]any
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeFakeErr(w, http.StatusBadRequest, "invalid_request", "body must be JSON")
+	var body struct {
+		Name  *string  `json:"name"`
+		Beats *float64 `json:"beats"`
+	}
+	if !decodeStrict(w, r, &body) {
 		return
 	}
-	name, _ := body["name"].(string)
+	if body.Name == nil {
+		writeFakeErr(w, http.StatusBadRequest, "invalid_request", "missing required field: name")
+		return
+	}
+	name := *body.Name
 	if !fakeNameRe.MatchString(name) {
 		writeFakeErr(w, http.StatusBadRequest, "invalid_name", "shader name must match ^[a-z0-9][a-z0-9_-]{0,63}$")
 		return
@@ -232,20 +260,17 @@ func (f *fakeControl) crossfade(w http.ResponseWriter, r *http.Request) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	beats := f.beats
-	if v, ok := body["beats"]; ok {
-		b, _ := v.(float64)
+	if body.Beats != nil {
+		b := *body.Beats
 		if b <= 0 || b > 64 {
-			writeFakeErr(w, http.StatusBadRequest, "invalid_beats", "beats must be 0 < beats <= 64")
+			writeFakeErr(w, http.StatusBadRequest, "invalid_beats", "beats must satisfy 0 < beats <= 64")
 			return
 		}
 		beats = b
 	}
+	// 判定順は 名前 400 → beats 400 → 未読込 404。BPM は常に 40〜300 なので BPM では失敗しない。
 	if _, ok := f.sources[name]; !ok {
-		writeFakeErr(w, http.StatusNotFound, "not_found", "shader "+name+" not found")
-		return
-	}
-	if f.bpm == 0 {
-		writeFakeErr(w, http.StatusConflict, "bpm_not_set", "BPM is not set")
+		writeFakeErr(w, http.StatusNotFound, "not_found", notLoaded(name))
 		return
 	}
 	f.fading, f.target = true, name
@@ -254,15 +279,22 @@ func (f *fakeControl) crossfade(w http.ResponseWriter, r *http.Request) {
 
 func (f *fakeControl) setBPM(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		BPM float64 `json:"bpm"`
+		BPM *float64 `json:"bpm"`
 	}
-	_ = json.NewDecoder(r.Body).Decode(&body)
-	if body.BPM < 20 || body.BPM > 300 {
-		writeFakeErr(w, http.StatusBadRequest, "invalid_bpm", "bpm must be between 20 and 300")
+	if !decodeStrict(w, r, &body) {
+		return
+	}
+	if body.BPM == nil {
+		writeFakeErr(w, http.StatusBadRequest, "invalid_request", "missing required field: bpm")
+		return
+	}
+	bpm := *body.BPM
+	if bpm < 40 || bpm > 300 {
+		writeFakeErr(w, http.StatusBadRequest, "invalid_bpm", "bpm must be between 40 and 300")
 		return
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.bpm = body.BPM
-	writeFakeJSON(w, http.StatusOK, map[string]any{"bpm": body.BPM})
+	f.bpm, f.bpmMeasured = bpm, true
+	writeFakeJSON(w, http.StatusOK, map[string]any{"bpm": bpm})
 }

@@ -31,6 +31,9 @@ names and types (names must start with an upper-case letter):
     var Frame int         // frame counter
     var Random float      // new random value 0..1 every frame
 
+Beat always runs: before anyone taps the tempo or calls set_bpm it follows
+the default 120 BPM. The tempo is always within 40-300 BPM.
+
 3. TYPES
 --------
 Allowed: bool, int, float, vec2, vec3, vec4, ivec2, ivec3, ivec4,

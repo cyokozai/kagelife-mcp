@@ -33,14 +33,18 @@ type crossfadeArgs struct {
 }
 
 type bpmArgs struct {
-	BPM float64 `json:"bpm" jsonschema:"tempo in beats per minute, 20 to 300"`
+	BPM float64 `json:"bpm" jsonschema:"tempo in beats per minute, 40 to 300"`
 }
 
+// stateResp は GET /v1/state の応答（ADR-006）。
+// BPM は常に 40〜300 でタップ前は既定の 120。BPMMeasured は BPM がタップか set_bpm で
+// 設定された値なら true、既定値のままなら false。
 type stateResp struct {
-	Active  string   `json:"active"`
-	Shaders []string `json:"shaders"`
-	BPM     float64  `json:"bpm"`
-	Fade    struct {
+	Active      string   `json:"active"`
+	Shaders     []string `json:"shaders"`
+	BPM         float64  `json:"bpm"`
+	BPMMeasured bool     `json:"bpm_measured"`
+	Fade        struct {
 		Fading bool    `json:"fading"`
 		Target string  `json:"target"`
 		Mix    float64 `json:"mix"`
@@ -81,9 +85,9 @@ func describeErr(err error) string {
 	case ae.Code == "loop_timeout" || ae.Status == http.StatusServiceUnavailable:
 		return head + "\nkagelife's render loop was too busy to answer. Wait a moment and retry. If this keeps happening, the active shader may be too heavy."
 	case ae.Code == "not_found" || ae.Status == http.StatusNotFound:
-		return head + "\nCall list_shaders to see the available shader names."
-	case ae.Code == "bpm_not_set":
-		return head + "\nCrossfades are timed in beats, so a tempo is required. Call set_bpm first (e.g. 120), then retry crossfade."
+		return head + "\nCall list_shaders to see the available shader names. " +
+			"A shader that is listed but failed to compile is also not_found for switch_shader and crossfade: " +
+			"call get_state and read last_error, then fix it with write_shader."
 	case ae.Code == "unit_pixels_required":
 		return head + "\nThe source must include the line `//kage:unit pixels` (put it at the very top, before `package main`). Add it and call write_shader again."
 	case ae.Code == "invalid_request":
@@ -124,10 +128,10 @@ func formatState(s stateResp) string {
 	}
 	fmt.Fprintf(&b, "active: %s\n", active)
 	fmt.Fprintf(&b, "shaders (%d): %s\n", len(s.Shaders), strings.Join(s.Shaders, ", "))
-	if s.BPM == 0 {
-		b.WriteString("bpm: 0 (not set; call set_bpm before crossfade)\n")
+	if s.BPMMeasured {
+		fmt.Fprintf(&b, "bpm: %s (measured: tapped in the GUI or set with set_bpm)\n", fmtNum(s.BPM))
 	} else {
-		fmt.Fprintf(&b, "bpm: %s\n", fmtNum(s.BPM))
+		fmt.Fprintf(&b, "bpm: %s (default; nobody has tapped or called set_bpm yet)\n", fmtNum(s.BPM))
 	}
 	if s.Fade.Fading {
 		fmt.Fprintf(&b, "fade: fading to %s, mix %.2f, beats %s\n", s.Fade.Target, s.Fade.Mix, fmtNum(s.Fade.Beats))
@@ -163,8 +167,9 @@ func registerTools(srv *mcp.Server, c *client) {
 
 	mcp.AddTool(srv, &mcp.Tool{
 		Name: "list_shaders",
-		Description: "List the names of all loaded shaders (without the .kage extension) and mark the one currently on screen. " +
-			"Use these names with read_shader, switch_shader and crossfade.",
+		Description: "List the names of all shader files (without the .kage extension) and mark the one currently on screen. " +
+			"Use these names with read_shader, switch_shader and crossfade. " +
+			"The list also includes files that failed to compile; those cannot be switched to until fixed (see last_error in get_state).",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, _ noArgs) (*mcp.CallToolResult, any, error) {
 		var s stateResp
 		if err := c.do(ctx, http.MethodGet, "/v1/state", nil, &s); err != nil {
@@ -203,7 +208,8 @@ func registerTools(srv *mcp.Server, c *client) {
 			"The source is compiled before anything is saved. If compilation fails, nothing is written, the screen keeps showing the previous shader, " +
 			"and the error lists line:col diagnostics so you can fix the source and call write_shader again. " +
 			"The source must contain `//kage:unit pixels`. Writing does not switch the screen to a new shader; " +
-			"call switch_shader or crossfade afterwards. If you replace the active shader, the screen updates immediately. " +
+			"call switch_shader or crossfade afterwards (exception: if nothing was on screen, the written shader is shown). " +
+			"If you replace the active shader, the screen updates immediately. " +
 			"Call get_kage_guide first if you have not written Kage before.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in writeArgs) (*mcp.CallToolResult, any, error) {
 		var out struct {
@@ -215,7 +221,8 @@ func registerTools(srv *mcp.Server, c *client) {
 			return errText(describeErr(err)), nil, nil
 		}
 		if out.Created {
-			return text(fmt.Sprintf("Compiled and created new shader %s. It is not on screen yet: call switch_shader or crossfade to show it.", in.Name)), nil, nil
+			return text(fmt.Sprintf("Compiled and created new shader %s. Writing does not switch the screen: call switch_shader or crossfade to show it "+
+				"(only if nothing was on screen before is it shown right away).", in.Name)), nil, nil
 		}
 		return text(fmt.Sprintf("Compiled and replaced shader %s. If it is the active shader, the screen already shows the new version.", in.Name)), nil, nil
 	})
@@ -236,9 +243,10 @@ func registerTools(srv *mcp.Server, c *client) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name: "crossfade",
 		Description: "Start a smooth crossfade from the current shader to another one, timed in beats of the current BPM. " +
-			"Requires a BPM (call set_bpm first if get_state says it is not set). " +
+			"The BPM is always between 40 and 300 (120 by default before anyone taps), so crossfade never fails because of the tempo. " +
 			"beats is optional (0 < beats <= 64); when omitted the current default fade length is used. " +
-			"The call returns immediately; the fade then runs on screen.",
+			"The call returns immediately; the fade then runs on screen. " +
+			"Calling crossfade again during a fade may continue, cancel or restart the fade; call get_state to see the result in active and fade.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in crossfadeArgs) (*mcp.CallToolResult, any, error) {
 		body := map[string]any{"name": in.Name}
 		if in.Beats != nil {
@@ -256,7 +264,8 @@ func registerTools(srv *mcp.Server, c *client) {
 
 	mcp.AddTool(srv, &mcp.Tool{
 		Name: "set_bpm",
-		Description: "Set the tempo in BPM (20 to 300). This drives the Beat uniform (phase 0..1 within each beat) and crossfade timing. " +
+		Description: "Set the tempo in BPM (40 to 300). This drives the Beat uniform (phase 0..1 within each beat) and crossfade timing. " +
+			"Without it the tempo is the default 120 BPM (or whatever was tapped). " +
 			"A human tapping the tempo in the GUI may override it later.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in bpmArgs) (*mcp.CallToolResult, any, error) {
 		var out struct {

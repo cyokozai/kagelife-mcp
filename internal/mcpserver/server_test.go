@@ -284,11 +284,30 @@ func TestGetState(t *testing.T) {
 	wantContains(t, txt, "active: 01_uv", "01_uv, 02_time_sin", "bpm: 120", "fps: 59.9", "1280x720", "03_bad", "3:1: boom", "beats 4")
 }
 
-func TestGetStateBPMNotSetHint(t *testing.T) {
+// BPM は常に 40〜300 で、タップ前は既定の 120（ADR-006 GET /v1/state、PRD Q-008）。
+// 「未設定」は存在せず、既定値か設定・測定された値かを bpm_measured で見分ける。
+func TestGetStateShowsDefaultBPM(t *testing.T) {
 	f, cs := setup(t)
-	f.with(func() { f.bpm = 0 })
+	f.with(func() { f.bpm, f.bpmMeasured = 120, false })
 	txt := mustOK(t, cs, "get_state", nil)
-	wantContains(t, txt, "not set")
+	wantContains(t, txt, "bpm: 120 (default")
+	if strings.Contains(txt, "not set") {
+		t.Errorf("BPM is never unset; got:\n%s", txt)
+	}
+}
+
+func TestGetStateShowsMeasuredBPM(t *testing.T) {
+	f, cs := setup(t)
+	f.with(func() { f.bpm, f.bpmMeasured = 128, true })
+	txt := mustOK(t, cs, "get_state", nil)
+	wantContains(t, txt, "bpm: 128 (measured")
+}
+
+func TestSetBPMMakesStateMeasured(t *testing.T) {
+	_, cs := setup(t)
+	wantContains(t, mustOK(t, cs, "get_state", nil), "bpm: 120 (default")
+	mustOK(t, cs, "set_bpm", map[string]any{"bpm": 140})
+	wantContains(t, mustOK(t, cs, "get_state", nil), "bpm: 140 (measured")
 }
 
 func TestListShaders(t *testing.T) {
@@ -421,11 +440,38 @@ func TestCrossfadeOmitsBeatsWhenNotGiven(t *testing.T) {
 	}
 }
 
-func TestCrossfadeBPMNotSet(t *testing.T) {
+// タップ前（既定の 120 BPM）でも crossfade は通る。BPM を理由に失敗しない（ADR-006 補足 4）。
+func TestCrossfadeWorksWithDefaultBPM(t *testing.T) {
 	f, cs := setup(t)
-	f.with(func() { f.bpm = 0 })
-	txt := mustErr(t, cs, "crossfade", map[string]any{"name": "02_time_sin"})
-	wantContains(t, txt, "bpm_not_set", "set_bpm")
+	f.with(func() { f.bpm, f.bpmMeasured = 120, false })
+	txt := mustOK(t, cs, "crossfade", map[string]any{"name": "02_time_sin"})
+	wantContains(t, txt, "02_time_sin", "4 beats")
+}
+
+func TestNoToolTellsToSetBPMFirst(t *testing.T) {
+	cs := connect(t, Config{ControlFile: filepath.Join(t.TempDir(), "none.json")})
+	res, err := cs.ListTools(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tool := range res.Tools {
+		d := strings.ToLower(tool.Description)
+		for _, bad := range []string{"set_bpm first", "requires a bpm", "bpm_not_set", "not set"} {
+			if strings.Contains(d, bad) {
+				t.Errorf("%s: description still says %q: %s", tool.Name, bad, tool.Description)
+			}
+		}
+		if tool.Name == "crossfade" {
+			wantContains(t, d, "120")
+		}
+	}
+}
+
+func TestSwitchNotFoundMentionsLastError(t *testing.T) {
+	_, cs := setup(t)
+	txt := mustErr(t, cs, "switch_shader", map[string]any{"name": "zz"})
+	// コンパイルに失敗したファイルも 404（ADR-006 補足 16）なので、last_error を見るよう促す。
+	wantContains(t, txt, "not_found", "list_shaders", "last_error", "get_state")
 }
 
 func TestCrossfadeInvalidBeats(t *testing.T) {
@@ -449,6 +495,44 @@ func TestSetBPMInvalid(t *testing.T) {
 	_, cs := setup(t)
 	txt := mustErr(t, cs, "set_bpm", map[string]any{"bpm": 5})
 	wantContains(t, txt, "invalid_bpm")
+}
+
+// set_bpm の範囲は 40〜300（ADR-006 POST /v1/bpm、ADR-008 D3）。
+func TestSetBPMRange(t *testing.T) {
+	for _, bpm := range []float64{20, 39.9, 300.1} {
+		_, cs := setup(t)
+		txt := mustErr(t, cs, "set_bpm", map[string]any{"bpm": bpm})
+		wantContains(t, txt, "invalid_bpm", "40", "300")
+	}
+	for _, bpm := range []float64{40, 300} {
+		_, cs := setup(t)
+		txt := mustOK(t, cs, "set_bpm", map[string]any{"bpm": bpm})
+		wantContains(t, txt, fmtNum(bpm))
+	}
+}
+
+func TestSetBPMDescriptionRange(t *testing.T) {
+	cs := connect(t, Config{ControlFile: filepath.Join(t.TempDir(), "none.json")})
+	res, err := cs.ListTools(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tool := range res.Tools {
+		if tool.Name != "set_bpm" {
+			continue
+		}
+		wantContains(t, tool.Description, "40 to 300")
+		b, err := json.Marshal(tool.InputSchema)
+		if err != nil {
+			t.Fatal(err)
+		}
+		wantContains(t, string(b), "40 to 300")
+		if strings.Contains(tool.Description+string(b), "20 to") {
+			t.Errorf("set_bpm still mentions the old range 20: %s %s", tool.Description, b)
+		}
+		return
+	}
+	t.Fatal("set_bpm not found")
 }
 
 func TestGetKageGuide(t *testing.T) {
@@ -503,11 +587,65 @@ func TestCrossfadeInvalidBeatsBeforeNotFound(t *testing.T) {
 	wantContains(t, txt, "invalid_beats")
 }
 
-func TestCrossfadeNotFoundBeforeBPMNotSet(t *testing.T) {
-	f, cs := setup(t)
-	f.with(func() { f.bpm = 0 })
+func TestCrossfadeNotFound(t *testing.T) {
+	_, cs := setup(t)
 	txt := mustErr(t, cs, "crossfade", map[string]any{"name": "zz"})
-	wantContains(t, txt, "not_found")
+	wantContains(t, txt, "not_found", "last_error")
+}
+
+// フェイクは未知のフィールドを 400 にする（#24 の厳格なデコードに合わせる）。
+// これでクライアントが契約に無いフィールドを送ると、各ツールのテストが落ちる。
+func TestFakeRejectsUnknownFields(t *testing.T) {
+	f := newFakeControl(t)
+	for _, c := range []struct{ method, path, body string }{
+		{http.MethodPut, "/v1/shaders/01_uv", `{"source":"//kage:unit pixels\n","extra":1}`},
+		{http.MethodPost, "/v1/switch", `{"name":"01_uv","extra":1}`},
+		{http.MethodPost, "/v1/crossfade", `{"name":"01_uv","beats":4,"extra":1}`},
+		{http.MethodPost, "/v1/bpm", `{"bpm":128,"extra":1}`},
+	} {
+		req, err := http.NewRequest(c.method, f.srv.URL+c.path, strings.NewReader(c.body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("Authorization", "Bearer "+f.token)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = resp.Body.Close()
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Errorf("%s %s with unknown field: status %d, want 400", c.method, c.path, resp.StatusCode)
+		}
+	}
+}
+
+func TestListShadersDescriptionIncludesFailedFiles(t *testing.T) {
+	cs := connect(t, Config{ControlFile: filepath.Join(t.TempDir(), "none.json")})
+	res, err := cs.ListTools(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tool := range res.Tools {
+		if tool.Name == "list_shaders" {
+			// shaders にはコンパイルに失敗したファイルも出る（ADR-006 補足 16）。
+			wantContains(t, strings.ToLower(tool.Description), "failed to compile")
+			return
+		}
+	}
+	t.Fatal("list_shaders not found")
+}
+
+func TestWriteShaderCreatedMentionsEmptyScreenException(t *testing.T) {
+	_, cs := setup(t)
+	txt := mustOK(t, cs, "write_shader", map[string]any{"name": "03_new", "source": "//kage:unit pixels\npackage main\n"})
+	// 表示中のシェーダが無ければ PUT の成功で表示される（ADR-006 補足 14）。
+	wantContains(t, txt, "nothing was on screen")
+}
+
+func TestKageGuideSaysBeatRunsAtDefaultBPM(t *testing.T) {
+	cs := connect(t, Config{ControlFile: filepath.Join(t.TempDir(), "none.json")})
+	txt := mustOK(t, cs, "get_kage_guide", nil)
+	wantContains(t, txt, "120 BPM", "40-300")
 }
 
 func TestUsageMentionsBinaryName(t *testing.T) {

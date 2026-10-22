@@ -46,13 +46,13 @@ claude mcp add --transport stdio --scope project kagelife -- kagelife-mcp
 
 | ツール | 内容 |
 |---|---|
-| `get_state()` | アクティブなシェーダ、シェーダ一覧、BPM、クロスフェードの進み、FPS、解像度、最新のコンパイルエラー |
-| `list_shaders()` | シェーダ名の一覧（アクティブなものに印） |
+| `get_state()` | アクティブなシェーダ、シェーダ一覧、BPM（既定値か、タップ・`set_bpm` で設定された値か）、クロスフェードの進み、FPS、解像度、最新のコンパイルエラー |
+| `list_shaders()` | シェーダ名の一覧（アクティブなものに印）。コンパイルに失敗したファイルも含む（そのシェーダへは直すまで切り替えられない） |
 | `read_shader(name)` | シェーダのソースを返す |
-| `write_shader(name, source)` | シェーダを新規作成、または全文置換する。コンパイルに失敗したら何も保存せず、画面は前のシェーダのまま。エラーは `行:列: メッセージ` で返す。書き込んでも画面は切り替わらない |
+| `write_shader(name, source)` | シェーダを新規作成、または全文置換する。コンパイルに失敗したら何も保存せず、画面は前のシェーダのまま。エラーは `行:列: メッセージ` で返す。書き込んでも画面は切り替わらない（表示中のシェーダが無いときだけ、書き込んだシェーダが表示される） |
 | `switch_shader(name)` | 即時に切り替える |
-| `crossfade(name, beats?)` | 拍数を指定してクロスフェードする（`beats` は省略可、0 < beats <= 64）。BPM が必要 |
-| `set_bpm(bpm)` | BPM を設定する（20〜300） |
+| `crossfade(name, beats?)` | 拍数を指定してクロスフェードする（`beats` は省略可、0 < beats <= 64）。BPM は常に 40〜300（タップ前は既定の 120）なので、BPM を理由には失敗しない |
+| `set_bpm(bpm)` | BPM を設定する（40〜300。範囲外は `invalid_bpm`） |
 | `get_kage_guide()` | Kage の書き方の手引き（制約、`//kage:unit pixels`、`Fragment` の形、予約 uniform、テンプレート、VJ 向けの助言）。GUI が起動していなくても使える |
 
 ## 発見ファイル
