@@ -1,0 +1,109 @@
+KAGE SHADER GUIDE FOR KAGELIFE
+==============================
+
+Kage is Ebitengine's shading language. It looks like Go but is a small,
+GPU-oriented subset. Every kagelife shader is one file = one Kage program.
+
+1. REQUIRED SHAPE
+-----------------
+- The directive line `//kage:unit pixels` is mandatory (write_shader rejects
+  sources without it). Put it at the very top, before `package main`.
+- `package main`
+- Entry point, exactly this signature:
+
+    func Fragment(dstPos vec4, srcPos vec2, color vec4) vec4
+
+  It runs once per pixel and returns the RGBA color (each 0..1, alpha 1 for
+  opaque). dstPos.xy is the pixel position in pixels, origin top-left, Y grows
+  downward. srcPos and color are not useful in kagelife (no source image).
+- You may add helper functions (`func hash(p vec2) float { ... }`) and
+  package-level `const` values.
+
+2. UNIFORMS KAGELIFE PROVIDES EVERY FRAME
+-----------------------------------------
+Declare only the ones you use, as package-level variables with these exact
+names and types (names must start with an upper-case letter):
+
+    var Time float        // seconds since kagelife started
+    var Resolution vec2   // output size in pixels (width, height)
+    var Beat float        // phase within the current beat, 0..1 (0 = on the beat)
+    var Cursor vec2       // mouse position in pixels
+    var Frame int         // frame counter
+    var Random float      // new random value 0..1 every frame
+
+Beat always runs: before anyone taps the tempo or calls set_bpm it follows
+the default 120 BPM. The tempo is always within 40-300 BPM.
+
+3. TYPES
+--------
+Allowed: bool, int, float, vec2, vec3, vec4, ivec2, ivec3, ivec4,
+mat2, mat3, mat4, and fixed-length arrays such as [4]vec3.
+Swizzling works: v.xy, v.rgb, v.zyx, c.a.
+
+NOT available: struct, slice, map, string, pointer, interface, switch,
+goto, defer, go, select, channels, closures / func literals, import
+(no packages at all: there is no math package, use the built-ins), and
+methods. Recursion is not allowed.
+
+4. LANGUAGE PITFALLS
+--------------------
+- Numeric literals follow Go constant rules: `1/2` is integer 0. Write 0.5
+  or 1.0/2.0 in float math.
+- No implicit int/float mixing between typed values: use float(Frame),
+  int(x).
+- `%` is for int only. For float use mod(x, y) or fract(x).
+- for loops must have a constant bound: `for i := 0; i < 8; i++ { ... }`.
+  The bound cannot be a uniform or a variable.
+- Vector constructors: vec3(1), vec3(v.xy, 0.5), vec4(rgb, 1).
+- Remove unused variables and functions; keep code tidy.
+
+5. MAIN BUILT-IN FUNCTIONS
+--------------------------
+Trigonometry: sin cos tan asin acos
+  atan(y_over_x) takes ONE argument. The two-argument form is atan2(y, x).
+Exponential: pow exp log exp2 log2 sqrt inversesqrt
+Common: abs sign floor ceil fract mod min max clamp mix step smoothstep
+Geometry: length distance dot cross normalize reflect refract faceforward
+Matrix: transpose
+Derivatives: dfdx dfdy fwidth
+Other: len (arrays), discard() to skip the pixel.
+
+6. UV NORMALIZATION IDIOM
+-------------------------
+    uv := dstPos.xy / Resolution            // 0..1 across the screen
+    p := (dstPos.xy - 0.5*Resolution) / Resolution.y
+    // p is centered at 0, aspect corrected: y in -0.5..0.5, x scaled by width/height
+    // flip Y if you want math-style up: p.y = -p.y
+
+7. MINIMAL TEMPLATE
+-------------------
+//kage:unit pixels
+
+package main
+
+var Time float
+var Resolution vec2
+var Beat float
+
+func Fragment(dstPos vec4, srcPos vec2, color vec4) vec4 {
+	p := (dstPos.xy - 0.5*Resolution) / Resolution.y
+	pulse := 1.0 - Beat // 1 on the beat, decays to 0
+	d := length(p)
+	ring := smoothstep(0.02, 0.0, abs(d-0.25-0.1*pulse))
+	col := 0.5 + 0.5*cos(Time+vec3(0, 2, 4)+d*6.0)
+	return vec4(col*(0.3+ring+0.4*pulse), 1)
+}
+
+8. VJ TIPS
+----------
+- Sync to music with Beat: pulse := 1.0 - Beat, or pow(1.0-Beat, 4.0) for a
+  sharper kick; exp(-Beat*6.0) also works well.
+- Keep it light so kagelife holds 60 fps: avoid long loops (keep loop
+  bounds small, e.g. <= 64 iterations), deep raymarching, and many
+  octaves of noise. Check fps with get_state after switching.
+- Develop in small steps: write_shader, fix compile errors from the
+  line:col diagnostics, then switch_shader or crossfade.
+- Prefer creating a new shader name for a new look, so the previous one
+  stays available for crossfading back.
+- Time grows forever; use fract(Time*k) or sin(Time) for loops that stay
+  precise over long sets.
