@@ -135,7 +135,7 @@ func TestStdioRawJSONRPC(t *testing.T) {
 
 	p.send(`{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}`)
 	list := string(p.recv(2).Result)
-	for _, n := range []string{"get_state", "list_shaders", "read_shader", "write_shader", "switch_shader", "crossfade", "set_bpm", "get_kage_guide"} {
+	for _, n := range []string{"get_state", "list_shaders", "read_shader", "write_shader", "switch_shader", "crossfade", "set_bpm", "get_kage_guide", "write_back_slot"} {
 		if !strings.Contains(list, `"`+n+`"`) {
 			t.Fatalf("tools/list missing %s", n)
 		}

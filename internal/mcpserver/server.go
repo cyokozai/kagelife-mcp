@@ -36,7 +36,10 @@ func NewServer(cfg Config) *mcp.Server {
 	srv := mcp.NewServer(&mcp.Implementation{Name: "kagelife", Version: Version}, &mcp.ServerOptions{
 		Instructions: "Tools for live-coding Kage shaders on a running kagelife VJ screen. " +
 			"Start with get_state, read get_kage_guide before writing shaders, " +
-			"then iterate with write_shader and switch_shader / crossfade.",
+			"then iterate with write_shader and switch_shader / crossfade. " +
+			"If get_state lists llm_slots (kagelife started with -llm-slots), write each new look with write_back_slot " +
+			"(it picks the reserved slot that is not on screen), then crossfade to the returned name over about 8 beats; " +
+			"for the next song write_back_slot writes the other side.",
 	})
 	registerTools(srv, newClient(cfg))
 	return srv

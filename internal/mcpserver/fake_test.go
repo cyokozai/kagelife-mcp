@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -29,6 +30,17 @@ type fakeControl struct {
 	target      string
 	lastErr     map[string]string
 	requests    []string // "METHOD /path" の記録
+
+	// llmSlots は -llm-slots の予約名（nil なら無効）。空でなければ PUT は予約名にだけ書け、
+	// 映っている予約名には書けない（kagelife の checkLLMSlot）。
+	llmSlots []string
+	// failed はコンパイルに失敗したスロット。active と同じ名前でも映っていない扱いになる。
+	failed map[string]bool
+	// legacy は -llm-slots より前の GUI を模す。state に llm_slots と features を出さない。
+	legacy bool
+	// beforePut が非 nil なら PUT /v1/shaders/{name} の判定の前に mu を持たずに呼ぶ
+	// （state を読んでから PUT までの間に人が画面を切り替える場面の再現用）。
+	beforePut func(name string)
 
 	// override が非 nil なら全リクエストをこれで処理する（異常系の注入用）。
 	override http.HandlerFunc
@@ -156,13 +168,48 @@ func (f *fakeControl) state(w http.ResponseWriter, _ *http.Request) {
 	if f.lastErr != nil {
 		le = f.lastErr
 	}
-	writeFakeJSON(w, http.StatusOK, map[string]any{
+	st := map[string]any{
 		"active": f.active, "shaders": f.order, "bpm": f.bpm, "bpm_measured": f.bpmMeasured,
 		"fade":       map[string]any{"fading": f.fading, "target": f.target, "mix": 0.25, "beats": f.beats},
 		"fps":        59.9,
 		"resolution": []int{1280, 720},
 		"last_error": le,
-	})
+	}
+	if !f.legacy {
+		// このビルドの GUI は常に配列を出す（フラグ無しなら llm_slots は []）。
+		st["llm_slots"] = append([]string{}, f.llmSlots...)
+		st["features"] = []string{"llm_slots"}
+	}
+	writeFakeJSON(w, http.StatusOK, st)
+}
+
+// live は name が映っているかを返す（kagelife の Engine.Live と同じ定義。mu を持って呼ぶ）。
+// active と同じ名前でコンパイルに成功しているか、フェード中で fade.target と同じ名前なら映っている。
+func (f *fakeControl) live(name string) bool {
+	if f.active == name && !f.failed[name] {
+		return true
+	}
+	return f.fading && f.target == name
+}
+
+// checkLLMSlot は -llm-slots が有効なとき 403 forbidden_name / 409 slot_live を書いて false を返す。
+func (f *fakeControl) checkLLMSlot(w http.ResponseWriter, name string) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if len(f.llmSlots) == 0 {
+		return true
+	}
+	if !slices.Contains(f.llmSlots, name) {
+		writeFakeErr(w, http.StatusForbidden, "forbidden_name",
+			"this kagelife runs with -llm-slots; PUT may write only the reserved LLM slots ("+strings.Join(f.llmSlots, ", ")+")")
+		return false
+	}
+	if f.live(name) {
+		writeFakeErr(w, http.StatusConflict, "slot_live",
+			"shader "+name+" is on screen (active, or the target of a running crossfade) and cannot be written")
+		return false
+	}
+	return true
 }
 
 func (f *fakeControl) getShader(w http.ResponseWriter, r *http.Request) {
@@ -181,6 +228,16 @@ func (f *fakeControl) putShader(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	if !fakeNameRe.MatchString(name) {
 		writeFakeErr(w, http.StatusBadRequest, "invalid_name", "shader name must match ^[a-z0-9][a-z0-9_-]{0,63}$")
+		return
+	}
+	f.mu.Lock()
+	hook := f.beforePut
+	f.mu.Unlock()
+	if hook != nil {
+		hook(name)
+	}
+	// 判定の順は 名前 400 → 403 → 409 → 本文（kagelife の putShader）。
+	if !f.checkLLMSlot(w, name) {
 		return
 	}
 	var req struct {
@@ -217,6 +274,7 @@ func (f *fakeControl) putShader(w http.ResponseWriter, r *http.Request) {
 	defer f.mu.Unlock()
 	_, existed := f.sources[name]
 	f.sources[name] = body.Source
+	delete(f.failed, name)
 	if !existed {
 		f.order = append(f.order, name)
 	}

@@ -85,7 +85,7 @@ func wantContains(t *testing.T, got string, subs ...string) {
 
 // ── tools/list ─────────────────────────────────────────────
 
-func TestListToolsHasEightToolsWithRequired(t *testing.T) {
+func TestListToolsHasNineToolsWithRequired(t *testing.T) {
 	cs := connect(t, Config{ControlFile: filepath.Join(t.TempDir(), "none.json")})
 	res, err := cs.ListTools(context.Background(), nil)
 	if err != nil {
@@ -100,6 +100,8 @@ func TestListToolsHasEightToolsWithRequired(t *testing.T) {
 		"crossfade":      {"name"},
 		"set_bpm":        {"bpm"},
 		"get_kage_guide": nil,
+		// write_back_slot は -llm-slots の予約名のうち映っていない側へ書く。
+		"write_back_slot": {"source"},
 	}
 	if len(res.Tools) != len(want) {
 		t.Fatalf("got %d tools, want %d", len(res.Tools), len(want))

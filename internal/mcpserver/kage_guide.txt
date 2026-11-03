@@ -107,3 +107,17 @@ func Fragment(dstPos vec4, srcPos vec2, color vec4) vec4 {
   stays available for crossfading back.
 - Time grows forever; use fract(Time*k) or sin(Time) for loops that stay
   precise over long sets.
+
+9. RESERVED LLM SLOTS
+---------------------
+When kagelife is started with -llm-slots (e.g. -llm-slots llm_a,llm_b,
+on keys 8 and 9), get_state lists llm_slots and shaders can be written
+only to those reserved names, never to the one on screen.
+- Write each new look with write_back_slot: it picks the reserved slot
+  that is not on screen (neither active nor the target of a running
+  crossfade).
+- Once it compiles, crossfade to the returned name, e.g. over 8 beats.
+- For the next song call write_back_slot again: it writes the other
+  side, which is then off screen.
+- Make the motion ride the music with Beat (pulse on every beat) and Time
+  (slow drift), so one shader keeps working for the whole song.
