@@ -753,3 +753,82 @@ func TestGetStateDescriptionExplainsLastErrorReset(t *testing.T) {
 	}
 	t.Fatal("get_state not found")
 }
+
+// ── 本体 dev（#37・#41・ADR-006 補足 11）との突き合わせ ───────────
+
+func toolDescription(t *testing.T, name string) string {
+	t.Helper()
+	cs := connect(t, Config{ControlFile: filepath.Join(t.TempDir(), "none.json")})
+	res, err := cs.ListTools(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tool := range res.Tools {
+		if tool.Name == name {
+			return tool.Description
+		}
+	}
+	t.Fatalf("%s not found", name)
+	return ""
+}
+
+// set_bpm は呼んだ時刻を拍頭にし、タップの履歴を捨てる（本体 #41、PRD FR-013）。
+func TestSetBPMDescriptionWarnsAboutTapping(t *testing.T) {
+	d := toolDescription(t, "set_bpm")
+	wantContains(t, d, "beat start", "discards", "tapping")
+}
+
+func TestKageGuideBeatWarnsAboutSetBPM(t *testing.T) {
+	cs := connect(t, Config{ControlFile: filepath.Join(t.TempDir(), "none.json")})
+	txt := mustOK(t, cs, "get_kage_guide", nil)
+	wantContains(t, txt, "set_bpm", "discards", "tapping")
+}
+
+// -render-scale が 1 未満なら uniform の Resolution と Cursor は縮み、state の resolution は画面のまま（本体 #37）。
+func TestGetStateDescriptionSaysUseResolutionUniform(t *testing.T) {
+	d := toolDescription(t, "get_state")
+	wantContains(t, d, "-render-scale", "Resolution uniform", "hard-code")
+}
+
+func TestKageGuideResolutionMayDifferFromScreen(t *testing.T) {
+	cs := connect(t, Config{ControlFile: filepath.Join(t.TempDir(), "none.json")})
+	txt := mustOK(t, cs, "get_kage_guide", nil)
+	wantContains(t, txt, "-render-scale", "get_state", "hard-code", "Cursor")
+}
+
+// PUT の loop_timeout ではファイルが書けている場合がある（ADR-006 補足 11）。
+func TestWriteShaderLoopTimeoutMayHaveWritten(t *testing.T) {
+	f, cs := setup(t)
+	f.setOverride(func(w http.ResponseWriter, _ *http.Request) {
+		writeFakeErr(w, http.StatusServiceUnavailable, "loop_timeout", "game loop did not respond within 2s")
+	})
+	txt := mustErr(t, cs, "write_shader", map[string]any{"name": "03_new", "source": "//kage:unit pixels\n"})
+	wantContains(t, txt, "loop_timeout", "may already have been written", "read_shader", "03_new", "get_state")
+}
+
+func TestWriteShaderHTTPTimeoutMayHaveWritten(t *testing.T) {
+	f := newFakeControl(t)
+	release := make(chan struct{})
+	t.Cleanup(func() { close(release) })
+	f.setOverride(func(_ http.ResponseWriter, r *http.Request) {
+		select {
+		case <-release:
+		case <-r.Context().Done():
+		}
+	})
+	cs := connect(t, Config{ControlFile: f.writeDiscovery(t, t.TempDir()), Timeout: 200 * time.Millisecond})
+	txt := mustErr(t, cs, "write_shader", map[string]any{"name": "03_new", "source": "//kage:unit pixels\n"})
+	wantContains(t, txt, "did not respond", "may already have been written", "read_shader")
+}
+
+// 書き込み以外のツールには、書けている場合があるという案内を付けない。
+func TestLoopTimeoutOnNonWriteHasNoWriteHint(t *testing.T) {
+	f, cs := setup(t)
+	f.setOverride(func(w http.ResponseWriter, _ *http.Request) {
+		writeFakeErr(w, http.StatusServiceUnavailable, "loop_timeout", "game loop did not respond within 2s")
+	})
+	txt := mustErr(t, cs, "switch_shader", map[string]any{"name": "01_uv"})
+	if strings.Contains(txt, "may already have been written") {
+		t.Errorf("switch_shader got the write hint:\n%s", txt)
+	}
+}

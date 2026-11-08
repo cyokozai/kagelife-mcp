@@ -25,14 +25,21 @@ Declare only the ones you use, as package-level variables with these exact
 names and types (names must start with an upper-case letter):
 
     var Time float        // seconds since kagelife started
-    var Resolution vec2   // output size in pixels (width, height)
+    var Resolution vec2   // size of the image being drawn, in pixels (width, height)
     var Beat float        // phase within the current beat, 0..1 (0 = on the beat)
-    var Cursor vec2       // mouse position in pixels
+    var Cursor vec2       // mouse position in pixels of that image
     var Frame int         // frame counter
     var Random float      // new random value 0..1 every frame
 
 Beat always runs: before anyone taps the tempo or calls set_bpm it follows
 the default 120 BPM. The tempo is always within 40-300 BPM.
+set_bpm makes the moment you call it the beat start and discards the
+performer's taps: do not call it while they are tapping along to the music.
+
+With -render-scale below 1, kagelife draws at a smaller size and scales it
+up: Resolution and Cursor are then smaller than the window, while get_state
+still reports the window size as resolution. Never hard-code the get_state
+resolution in a shader; always use the Resolution uniform.
 
 3. TYPES
 --------

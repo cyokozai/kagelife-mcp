@@ -192,6 +192,16 @@ func (f *fakeControl) live(name string) bool {
 	return f.fading && f.target == name
 }
 
+// fakeSlotLiveMessage は kagelife の slotLiveMessage（internal/control/llmslots.go）と同じ文面を返す。
+func fakeSlotLiveMessage(name string, slots []string) string {
+	others := slices.DeleteFunc(slices.Clone(slots), func(s string) bool { return s == name })
+	msg := "shader " + name + " is on screen (active, or the target of a running crossfade) and cannot be written"
+	if len(others) == 0 {
+		return msg + "; wait until it is off screen"
+	}
+	return msg + "; write the other reserved slot instead (" + strings.Join(others, ", ") + ")"
+}
+
 // checkLLMSlot は -llm-slots が有効なとき 403 forbidden_name / 409 slot_live を書いて false を返す。
 func (f *fakeControl) checkLLMSlot(w http.ResponseWriter, name string) bool {
 	f.mu.Lock()
@@ -205,8 +215,7 @@ func (f *fakeControl) checkLLMSlot(w http.ResponseWriter, name string) bool {
 		return false
 	}
 	if f.live(name) {
-		writeFakeErr(w, http.StatusConflict, "slot_live",
-			"shader "+name+" is on screen (active, or the target of a running crossfade) and cannot be written")
+		writeFakeErr(w, http.StatusConflict, "slot_live", fakeSlotLiveMessage(name, f.llmSlots))
 		return false
 	}
 	return true

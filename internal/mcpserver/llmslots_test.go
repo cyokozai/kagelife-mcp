@@ -2,10 +2,12 @@ package mcpserver
 
 import (
 	"context"
+	"net/http"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -308,4 +310,68 @@ func TestKageGuideHasReservedSlotsSection(t *testing.T) {
 	cs := connect(t, Config{ControlFile: filepath.Join(t.TempDir(), "none.json")})
 	txt := mustOK(t, cs, "get_kage_guide", nil)
 	wantContains(t, txt, "RESERVED LLM SLOTS", "write_back_slot", "crossfade", "8 beats", "Beat", "Time")
+}
+
+// ── 本体 dev（#33）の 409 の文面 ─────────────────────────────
+
+// 本体の slotLiveMessage は他方の予約名を挙げて「そちらに書け」と添える。
+func TestWriteShaderSlotLiveNamesOtherSlot(t *testing.T) {
+	f, cs := setupSlots(t)
+	f.with(func() { f.active = "llm_a" })
+	txt := mustErr(t, cs, "write_shader", map[string]any{"name": "llm_a", "source": slotSrc})
+	wantContains(t, txt, "write the other reserved slot instead (llm_b)")
+}
+
+// 2 回目も 409 のとき、本体の「他方に書け」をそのまま見せると、他方も 409 だったのと食い違う。
+func TestWriteBackSlotBusyDoesNotSayWriteOther(t *testing.T) {
+	f, cs := setupSlots(t)
+	f.with(func() {
+		f.beforePut = func(name string) { f.with(func() { f.active = name }) }
+	})
+	txt := mustErr(t, cs, "write_back_slot", map[string]any{"source": slotSrc})
+	wantContains(t, txt, "llm_a", "llm_b", "Nothing was written")
+	if strings.Contains(txt, "write the other reserved slot instead") {
+		t.Errorf("contradicts the second slot_live:\n%s", txt)
+	}
+}
+
+// ── PUT が応答しなかったとき ─────────────────────────────────
+
+// -llm-slots 付きの PUT はゲームループを最大 3 回待つ。loop_timeout でもファイルが書けている
+// 場合がある（ADR-006 補足 11）ので、再送の前に確かめさせる。
+func TestWriteBackSlotLoopTimeoutMayHaveWritten(t *testing.T) {
+	f, cs := setupSlots(t)
+	f.setOverride(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			f.state(w, r)
+			return
+		}
+		writeFakeErr(w, http.StatusServiceUnavailable, "loop_timeout", "game loop did not respond within 2s")
+	})
+	txt := mustErr(t, cs, "write_back_slot", map[string]any{"source": slotSrc})
+	wantContains(t, txt, "loop_timeout", "llm_a", "may already have been written", "read_shader", "get_state")
+}
+
+func TestWriteBackSlotHTTPTimeoutMayHaveWritten(t *testing.T) {
+	f := newFakeControl(t)
+	f.with(func() { f.llmSlots = []string{"llm_a", "llm_b"} })
+	release := make(chan struct{})
+	t.Cleanup(func() { close(release) })
+	f.setOverride(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			f.state(w, r)
+			return
+		}
+		select {
+		case <-release:
+		case <-r.Context().Done():
+		}
+	})
+	cs := connect(t, Config{ControlFile: f.writeDiscovery(t, t.TempDir()), Timeout: 200 * time.Millisecond})
+	txt := mustErr(t, cs, "write_back_slot", map[string]any{"source": slotSrc})
+	wantContains(t, txt, "did not respond", "may already have been written", "read_shader")
+	// 再送はしない（PUT は 1 回だけ）。
+	if got := f.requestLog(); !slices.Equal(got, []string{"GET /v1/state", "PUT /v1/shaders/llm_a"}) {
+		t.Fatalf("requests = %v", got)
+	}
 }

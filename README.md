@@ -53,7 +53,7 @@ claude mcp add --transport stdio --scope project kagelife -- kagelife-mcp
 | `write_back_slot(source)` | GUI を `-llm-slots llm_a,llm_b` 付きで起動したときに使う。予約名のうち映っていない側（active でも、フェード中のフェード先でもない名前）へ全文を書く。書いても画面は切り替わらないので、続けて `crossfade`（例 8 拍）を呼ぶ。次の曲では逆側に書く。映っている予約名に当たったら（`slot_live`）state を 1 回だけ読み直して残りを試す。予約名が無い GUI には書かずに、更新か再起動を促す |
 | `switch_shader(name)` | 即時に切り替える |
 | `crossfade(name, beats?)` | 拍数を指定してクロスフェードする（`beats` は省略可、0 < beats <= 64）。BPM は常に 40〜300（タップ前は既定の 120）なので、BPM を理由には失敗しない |
-| `set_bpm(bpm)` | BPM を設定する（40〜300。範囲外は `invalid_bpm`） |
+| `set_bpm(bpm)` | BPM を設定する（40〜300。範囲外は `invalid_bpm`）。呼んだ時刻が拍頭になり、それまでのタップの履歴は捨てられるので、演者がタップで合わせている間は呼ばない |
 | `get_kage_guide()` | Kage の書き方の手引き（制約、`//kage:unit pixels`、`Fragment` の形、予約 uniform、テンプレート、VJ 向けの助言）。GUI が起動していなくても使える |
 
 ## 発見ファイル

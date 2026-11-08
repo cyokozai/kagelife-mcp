@@ -156,6 +156,27 @@ func describeErrFor(err error, tool string) string {
 	return head
 }
 
+// mayHaveWritten は PUT が応答を返さなかった（loop_timeout / 503 か、MCP 側のタイムアウト）かを返す。
+// このときファイルは書けている場合がある（ADR-006 補足 11。-llm-slots 付きの PUT はゲームループを最大 3 回待つ）。
+func mayHaveWritten(err error) bool {
+	var ae *apiError
+	if errors.As(err, &ae) {
+		return ae.Code == "loop_timeout" || ae.Status == http.StatusServiceUnavailable
+	}
+	var te *timeoutError
+	return errors.As(err, &te)
+}
+
+// describeWriteErr は PUT の失敗を describeErrFor で文面にし、応答が無かったときは再送の前に確かめるよう添える。
+func describeWriteErr(err error, tool, name string) string {
+	msg := describeErrFor(err, tool)
+	if mayHaveWritten(err) {
+		msg += "\nThe shader file " + name + " may already have been written even though kagelife did not answer. " +
+			"Before sending it again, check with read_shader name=" + name + " (or get_state) whether the new source is already there."
+	}
+	return msg
+}
+
 func formatCompileError(ae *apiError, tool string) string {
 	var b strings.Builder
 	b.WriteString("compile_error: the shader did not compile. Nothing was saved and the screen still shows the previous shader.\n")
@@ -263,16 +284,16 @@ func writeBackSlot(ctx context.Context, c *client, source string) *mcp.CallToolR
 		}
 		rest := slices.DeleteFunc(s.slotCandidates(), func(n string) bool { return n == live })
 		if len(rest) == 0 {
-			return errText(slotsBusyMessage(err))
+			return errText(slotsBusyMessage([]string{live}))
 		}
 		name = rest[0]
 		err = put(name)
 		if isSlotLive(err) {
-			return errText(slotsBusyMessage(err))
+			return errText(slotsBusyMessage([]string{live, name}))
 		}
 	}
 	if err != nil {
-		return errText("While writing reserved slot " + name + ":\n" + describeErrFor(err, "write_back_slot"))
+		return errText("While writing reserved slot " + name + ":\n" + describeWriteErr(err, "write_back_slot", name))
 	}
 
 	verb := "replaced"
@@ -296,11 +317,12 @@ func isSlotLive(err error) bool {
 	return errors.As(err, &ae) && ae.Code == "slot_live"
 }
 
-func slotsBusyMessage(err error) string {
-	var ae *apiError
-	errors.As(err, &ae)
-	return fmt.Sprintf("%s: %s\nEvery reserved slot is on screen right now (a crossfade between them is probably running). "+
-		"Nothing was written. Wait for the fade to finish, call get_state, then call write_back_slot again.", ae.Code, ae.Message)
+// slotsBusyMessage は試した予約名がすべて 409 slot_live だったときの案内。
+// GUI の message は「他方に書け」と添えるが、他方も 409 だったので、その文面は見せない。
+func slotsBusyMessage(tried []string) string {
+	return fmt.Sprintf("slot_live: tried reserved slot %s, and kagelife answered slot_live (on screen) every time. "+
+		"Nothing was written. A crossfade between the reserved slots is probably running, so writing the other slot by hand would fail too. "+
+		"Wait for the fade to finish, call get_state, then call write_back_slot again.", strings.Join(tried, ", then "))
 }
 
 func registerTools(srv *mcp.Server, c *client) {
@@ -310,6 +332,7 @@ func registerTools(srv *mcp.Server, c *client) {
 			"crossfade progress, FPS, resolution and the most recent shader compile error (including errors from files edited on disk; " +
 			"it is cleared as soon as any shader compiles successfully). " +
 			"When kagelife runs with -llm-slots it also lists the reserved LLM slots (llm_slots) and which of them is on screen or free. " +
+			"resolution is the window size; with -render-scale below 1 shaders are drawn smaller, so never hard-code it in a shader: always use the Resolution uniform. " +
 			"Call this first to orient yourself, and after changes to confirm FPS stays near 60.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, _ noArgs) (*mcp.CallToolResult, any, error) {
 		var s stateResp
@@ -374,7 +397,7 @@ func registerTools(srv *mcp.Server, c *client) {
 		}
 		body := map[string]string{"source": in.Source}
 		if err := c.do(ctx, http.MethodPut, shaderPath(in.Name), body, &out); err != nil {
-			return errText(describeErr(err)), nil, nil
+			return errText(describeWriteErr(err, "write_shader", in.Name)), nil, nil
 		}
 		if out.Created {
 			return text(fmt.Sprintf("Compiled and created new shader %s. Writing does not switch the screen: call switch_shader or crossfade to show it "+
@@ -434,6 +457,8 @@ func registerTools(srv *mcp.Server, c *client) {
 		Name: "set_bpm",
 		Description: "Set the tempo in BPM (40 to 300). This drives the Beat uniform (phase 0..1 within each beat) and crossfade timing. " +
 			"Without it the tempo is the default 120 BPM (or whatever was tapped). " +
+			"The moment you call it becomes the beat start (Beat = 0), and it discards the taps recorded so far. " +
+			"Do not call it while the performer is tapping the tempo in the GUI to match the music. " +
 			"A human tapping the tempo in the GUI may override it later.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in bpmArgs) (*mcp.CallToolResult, any, error) {
 		var out struct {
