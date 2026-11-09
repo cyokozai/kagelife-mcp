@@ -601,6 +601,7 @@ func TestGetKageGuide(t *testing.T) {
 		"func Fragment(dstPos vec4, srcPos vec2, color vec4) vec4",
 		"atan2", "struct", "switch",
 		"Time", "Resolution", "Beat", "Cursor", "Frame", "Random",
+		"AudioBass", "AudioMid", "AudioHigh", "AudioOnset",
 		"dstPos.xy / Resolution",
 		"60",
 	)
@@ -729,6 +730,45 @@ func TestKageGuideSaysBeatRunsAtDefaultBPM(t *testing.T) {
 	cs := connect(t, Config{ControlFile: filepath.Join(t.TempDir(), "none.json")})
 	txt := mustOK(t, cs, "get_kage_guide", nil)
 	wantContains(t, txt, "120 BPM", "40-300")
+}
+
+// 音の予約 uniform（計画 W2、2026-11-09 決定）。値が入るのは kagelife を -audio 付きで
+// 起動したときだけで、無ければ常に 0。手引きは 0 でも見られる絵と、明るさの明滅を避けることを書く。
+func TestKageGuideExplainsAudioUniforms(t *testing.T) {
+	cs := connect(t, Config{ControlFile: filepath.Join(t.TempDir(), "none.json")})
+	txt := mustOK(t, cs, "get_kage_guide", nil)
+	wantContains(t, txt,
+		"var AudioBass float",
+		"var AudioMid float",
+		"var AudioHigh float",
+		"var AudioOnset float",
+		"20-150 Hz", "150 Hz-2 kHz", "2-16 kHz",
+		"150 ms",
+		"-audio",
+		"always 0",
+		"still looks good when all four are 0",
+		"3 times per second",
+		"brightness",
+		"shape, position, hue",
+	)
+}
+
+func TestGetKageGuideDescriptionListsAudioUniforms(t *testing.T) {
+	cs := connect(t, Config{ControlFile: filepath.Join(t.TempDir(), "none.json")})
+	res, err := cs.ListTools(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tool := range res.Tools {
+		if tool.Name != "get_kage_guide" {
+			continue
+		}
+		wantContains(t, tool.Description,
+			"Time", "Resolution", "Beat", "Cursor", "Frame", "Random",
+			"AudioBass", "AudioMid", "AudioHigh", "AudioOnset", "-audio")
+		return
+	}
+	t.Fatal("get_kage_guide not found")
 }
 
 func TestUsageMentionsBinaryName(t *testing.T) {
