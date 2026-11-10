@@ -38,6 +38,12 @@ type fakeControl struct {
 	failed map[string]bool
 	// legacy は -llm-slots より前の GUI を模す。state に llm_slots と features を出さない。
 	legacy bool
+	// noPreviews は -previews=false を模す。features に previews を出さず、GET /v1/previews は 404 not_found。
+	noPreviews bool
+	// previewFrames は GET /v1/previews が順に返す keys。尽きたら最後のものを繰り返す。空なら keys は []。
+	previewFrames [][]fakePreviewKey
+	// previewCalls は GET /v1/previews を受けた回数。
+	previewCalls int
 	// beforePut が非 nil なら PUT /v1/shaders/{name} の判定の前に mu を持たずに呼ぶ
 	// （state を読んでから PUT までの間に人が画面を切り替える場面の再現用）。
 	beforePut func(name string)
@@ -66,6 +72,7 @@ func newFakeControl(t *testing.T) *fakeControl {
 	mux.HandleFunc("POST /v1/switch", f.switchShader)
 	mux.HandleFunc("POST /v1/crossfade", f.crossfade)
 	mux.HandleFunc("POST /v1/bpm", f.setBPM)
+	mux.HandleFunc("GET /v1/previews", f.previews)
 	f.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		f.mu.Lock()
 		f.requests = append(f.requests, r.Method+" "+r.URL.Path)
@@ -178,9 +185,39 @@ func (f *fakeControl) state(w http.ResponseWriter, _ *http.Request) {
 	if !f.legacy {
 		// このビルドの GUI は常に配列を出す（フラグ無しなら llm_slots は []）。
 		st["llm_slots"] = append([]string{}, f.llmSlots...)
-		st["features"] = []string{"llm_slots"}
+		// 本体の features.go と同じく名前順。-previews=false のときだけ previews を出さない（ADR-006 補足 27・32）。
+		if f.noPreviews {
+			st["features"] = []string{"keys", "llm_slots"}
+		} else {
+			st["features"] = []string{"keys", "llm_slots", "previews"}
+		}
 	}
 	writeFakeJSON(w, http.StatusOK, st)
+}
+
+// fakePreviewKey は GET /v1/previews の keys の 1 件（本体の control.PreviewKey と同じ形）。
+// JPEG が nil なら null になり、それ以外は encoding/json が base64 にする。
+type fakePreviewKey struct {
+	Key          string `json:"key"`
+	Name         string `json:"name"`
+	JPEG         []byte `json:"jpeg"`
+	CompileError bool   `json:"compile_error"`
+}
+
+// previews は GET /v1/previews（ADR-006 補足 27〜32）。-previews=false なら未定義パスと同じ 404 not_found。
+func (f *fakeControl) previews(w http.ResponseWriter, _ *http.Request) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.noPreviews {
+		writeFakeErr(w, http.StatusNotFound, "not_found", "no such endpoint")
+		return
+	}
+	keys := []fakePreviewKey{}
+	if n := len(f.previewFrames); n > 0 {
+		keys = f.previewFrames[min(f.previewCalls, n-1)]
+	}
+	f.previewCalls++
+	writeFakeJSON(w, http.StatusOK, map[string]any{"size": 72, "fps": 10, "frame": f.previewCalls, "keys": keys})
 }
 
 // live は name が映っているかを返す（kagelife の Engine.Live と同じ定義。mu を持って呼ぶ）。

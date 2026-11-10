@@ -35,6 +35,9 @@ Beat always runs: before anyone taps the tempo or calls set_bpm it follows
 the default 120 BPM. The tempo is always within 40-300 BPM.
 set_bpm makes the moment you call it the beat start and discards the
 performer's taps: do not call it while they are tapping along to the music.
+With -link, once kagelife is synced to Ableton Link (e.g. rekordbox LINK),
+the tempo and Beat come from Link and set_bpm is reverted at once: do not
+call it then. get_state cannot tell whether Link is synced; ask the user.
 
 With -render-scale below 1, kagelife draws at a smaller size and scales it
 up: Resolution and Cursor are then smaller than the window, while get_state

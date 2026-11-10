@@ -146,6 +146,8 @@ func describeErrFor(err error, tool string) string {
 	case ae.Code == "slot_live":
 		return head + "\nThat reserved slot is on screen (active, or the target of a running crossfade), so it cannot be overwritten. " +
 			"Call write_back_slot to write the reserved slot that is not on screen, or wait for the crossfade to finish and check get_state."
+	case ae.Code == "too_large" || ae.Status == http.StatusRequestEntityTooLarge:
+		return head + "\nThe source can be at most 64KiB. Make it shorter (drop comments, unused helpers and repeated code) and call " + tool + " again with the full source."
 	case ae.Code == "invalid_request":
 		return head + "\nkagelife rejected the request as malformed or missing a required field. Check the tool arguments and call the tool again."
 	case ae.Code == "internal_error" || ae.Status == http.StatusInternalServerError:
@@ -205,6 +207,7 @@ func formatState(s stateResp) string {
 	}
 	fmt.Fprintf(&b, "active: %s\n", active)
 	fmt.Fprintf(&b, "shaders (%d): %s\n", len(s.Shaders), strings.Join(s.Shaders, ", "))
+	b.WriteString(formatKeys(s))
 	if s.BPMMeasured {
 		fmt.Fprintf(&b, "bpm: %s (measured: tapped in the GUI or set with set_bpm)\n", fmtNum(s.BPM))
 	} else {
@@ -328,7 +331,7 @@ func slotsBusyMessage(tried []string) string {
 func registerTools(srv *mcp.Server, c *client) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name: "get_state",
-		Description: "Get the live state of the kagelife VJ screen: active shader, all shader names, BPM, " +
+		Description: "Get the live state of the kagelife VJ screen: active shader, all shader names, which shader each number key 1-9 selects, BPM, " +
 			"crossfade progress, FPS, resolution and the most recent shader compile error (including errors from files edited on disk; " +
 			"it is cleared as soon as any shader compiles successfully). " +
 			"When kagelife runs with -llm-slots it also lists the reserved LLM slots (llm_slots) and which of them is on screen or free. " +
@@ -459,7 +462,10 @@ func registerTools(srv *mcp.Server, c *client) {
 			"Without it the tempo is the default 120 BPM (or whatever was tapped). " +
 			"The moment you call it becomes the beat start (Beat = 0), and it discards the taps recorded so far. " +
 			"Do not call it while the performer is tapping the tempo in the GUI to match the music. " +
-			"A human tapping the tempo in the GUI may override it later.",
+			"A human tapping the tempo in the GUI may override it later. " +
+			"If kagelife was started with -link and is synced to Ableton Link (e.g. rekordbox LINK, once Link has peers), BPM and Beat come from Link: " +
+			"set_bpm is accepted but reverted to the Link tempo by the next frame, so do not call set_bpm while synced. " +
+			"get_state cannot tell whether kagelife is synced to Link (the state has no Link field); ask the user if unsure.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in bpmArgs) (*mcp.CallToolResult, any, error) {
 		var out struct {
 			BPM float64 `json:"bpm"`

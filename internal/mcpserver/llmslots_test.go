@@ -47,7 +47,7 @@ func TestGetStateShowsLLMSlots(t *testing.T) {
 		f.order = append(f.order, "llm_a", "llm_b")
 	})
 	txt := mustOK(t, cs, "get_state", nil)
-	wantContains(t, txt, "llm_slots: llm_a (on screen), llm_b (free)", "features: llm_slots")
+	wantContains(t, txt, "llm_slots: llm_a (on screen), llm_b (free)", "features: keys, llm_slots, previews")
 }
 
 func TestGetStateShowsFadeTargetSlotOnScreen(t *testing.T) {
@@ -68,7 +68,7 @@ func TestGetStateIgnoresStaleFadeTarget(t *testing.T) {
 func TestGetStateWithoutLLMSlotsFlag(t *testing.T) {
 	_, cs := setup(t)
 	txt := mustOK(t, cs, "get_state", nil)
-	wantContains(t, txt, "llm_slots: none", "features: llm_slots")
+	wantContains(t, txt, "llm_slots: none", "features: keys, llm_slots, previews")
 }
 
 func TestGetStateLegacyGUI(t *testing.T) {
