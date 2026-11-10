@@ -25,14 +25,24 @@ Declare only the ones you use, as package-level variables with these exact
 names and types (names must start with an upper-case letter):
 
     var Time float        // seconds since kagelife started
-    var Resolution vec2   // output size in pixels (width, height)
+    var Resolution vec2   // size of the image being drawn, in pixels (width, height)
     var Beat float        // phase within the current beat, 0..1 (0 = on the beat)
-    var Cursor vec2       // mouse position in pixels
+    var Cursor vec2       // mouse position in pixels of that image
     var Frame int         // frame counter
     var Random float      // new random value 0..1 every frame
 
 Beat always runs: before anyone taps the tempo or calls set_bpm it follows
 the default 120 BPM. The tempo is always within 40-300 BPM.
+set_bpm makes the moment you call it the beat start and discards the
+performer's taps: do not call it while they are tapping along to the music.
+With -link, once kagelife is synced to Ableton Link (e.g. rekordbox LINK),
+the tempo and Beat come from Link and set_bpm is reverted at once: do not
+call it then. get_state cannot tell whether Link is synced; ask the user.
+
+With -render-scale below 1, kagelife draws at a smaller size and scales it
+up: Resolution and Cursor are then smaller than the window, while get_state
+still reports the window size as resolution. Never hard-code the get_state
+resolution in a shader; always use the Resolution uniform.
 
 3. TYPES
 --------
@@ -107,3 +117,17 @@ func Fragment(dstPos vec4, srcPos vec2, color vec4) vec4 {
   stays available for crossfading back.
 - Time grows forever; use fract(Time*k) or sin(Time) for loops that stay
   precise over long sets.
+
+9. RESERVED LLM SLOTS
+---------------------
+When kagelife is started with -llm-slots (e.g. -llm-slots llm_a,llm_b,
+on keys 8 and 9), get_state lists llm_slots and shaders can be written
+only to those reserved names, never to the one on screen.
+- Write each new look with write_back_slot: it picks the reserved slot
+  that is not on screen (neither active nor the target of a running
+  crossfade).
+- Once it compiles, crossfade to the returned name, e.g. over 8 beats.
+- For the next song call write_back_slot again: it writes the other
+  side, which is then off screen.
+- Make the motion ride the music with Beat (pulse on every beat) and Time
+  (slow drift), so one shader keeps working for the whole song.

@@ -57,6 +57,13 @@ type diagnostic struct {
 	Message string `json:"message"`
 }
 
+// timeoutError は制御口が c.http.Timeout の間に応答しなかったことを表す。
+type timeoutError struct{ d time.Duration }
+
+func (e *timeoutError) Error() string {
+	return fmt.Sprintf("kagelife did not respond within %s; it may be busy or frozen. Try again", e.d)
+}
+
 func (e *apiError) Error() string {
 	return fmt.Sprintf("%s (HTTP %d): %s", e.Code, e.Status, e.Message)
 }
@@ -174,7 +181,7 @@ func (c *client) do(ctx context.Context, method, path string, body, out any) err
 		}
 		var ne net.Error
 		if errors.As(err, &ne) && ne.Timeout() {
-			return fmt.Errorf("kagelife did not respond within %s; it may be busy or frozen. Try again", c.http.Timeout)
+			return &timeoutError{d: c.http.Timeout}
 		}
 		return fmt.Errorf("cannot reach kagelife at %s: %w", ep.Addr, err)
 	}

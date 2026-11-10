@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -29,6 +30,23 @@ type fakeControl struct {
 	target      string
 	lastErr     map[string]string
 	requests    []string // "METHOD /path" の記録
+
+	// llmSlots は -llm-slots の予約名（nil なら無効）。空でなければ PUT は予約名にだけ書け、
+	// 映っている予約名には書けない（kagelife の checkLLMSlot）。
+	llmSlots []string
+	// failed はコンパイルに失敗したスロット。active と同じ名前でも映っていない扱いになる。
+	failed map[string]bool
+	// legacy は -llm-slots より前の GUI を模す。state に llm_slots と features を出さない。
+	legacy bool
+	// noPreviews は -previews=false を模す。features に previews を出さず、GET /v1/previews は 404 not_found。
+	noPreviews bool
+	// previewFrames は GET /v1/previews が順に返す keys。尽きたら最後のものを繰り返す。空なら keys は []。
+	previewFrames [][]fakePreviewKey
+	// previewCalls は GET /v1/previews を受けた回数。
+	previewCalls int
+	// beforePut が非 nil なら PUT /v1/shaders/{name} の判定の前に mu を持たずに呼ぶ
+	// （state を読んでから PUT までの間に人が画面を切り替える場面の再現用）。
+	beforePut func(name string)
 
 	// override が非 nil なら全リクエストをこれで処理する（異常系の注入用）。
 	override http.HandlerFunc
@@ -54,6 +72,7 @@ func newFakeControl(t *testing.T) *fakeControl {
 	mux.HandleFunc("POST /v1/switch", f.switchShader)
 	mux.HandleFunc("POST /v1/crossfade", f.crossfade)
 	mux.HandleFunc("POST /v1/bpm", f.setBPM)
+	mux.HandleFunc("GET /v1/previews", f.previews)
 	f.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		f.mu.Lock()
 		f.requests = append(f.requests, r.Method+" "+r.URL.Path)
@@ -156,13 +175,87 @@ func (f *fakeControl) state(w http.ResponseWriter, _ *http.Request) {
 	if f.lastErr != nil {
 		le = f.lastErr
 	}
-	writeFakeJSON(w, http.StatusOK, map[string]any{
+	st := map[string]any{
 		"active": f.active, "shaders": f.order, "bpm": f.bpm, "bpm_measured": f.bpmMeasured,
 		"fade":       map[string]any{"fading": f.fading, "target": f.target, "mix": 0.25, "beats": f.beats},
 		"fps":        59.9,
 		"resolution": []int{1280, 720},
 		"last_error": le,
-	})
+	}
+	if !f.legacy {
+		// このビルドの GUI は常に配列を出す（フラグ無しなら llm_slots は []）。
+		st["llm_slots"] = append([]string{}, f.llmSlots...)
+		// 本体の features.go と同じく名前順。-previews=false のときだけ previews を出さない（ADR-006 補足 27・32）。
+		if f.noPreviews {
+			st["features"] = []string{"keys", "llm_slots"}
+		} else {
+			st["features"] = []string{"keys", "llm_slots", "previews"}
+		}
+	}
+	writeFakeJSON(w, http.StatusOK, st)
+}
+
+// fakePreviewKey は GET /v1/previews の keys の 1 件（本体の control.PreviewKey と同じ形）。
+// JPEG が nil なら null になり、それ以外は encoding/json が base64 にする。
+type fakePreviewKey struct {
+	Key          string `json:"key"`
+	Name         string `json:"name"`
+	JPEG         []byte `json:"jpeg"`
+	CompileError bool   `json:"compile_error"`
+}
+
+// previews は GET /v1/previews（ADR-006 補足 27〜32）。-previews=false なら未定義パスと同じ 404 not_found。
+func (f *fakeControl) previews(w http.ResponseWriter, _ *http.Request) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.noPreviews {
+		writeFakeErr(w, http.StatusNotFound, "not_found", "no such endpoint")
+		return
+	}
+	keys := []fakePreviewKey{}
+	if n := len(f.previewFrames); n > 0 {
+		keys = f.previewFrames[min(f.previewCalls, n-1)]
+	}
+	f.previewCalls++
+	writeFakeJSON(w, http.StatusOK, map[string]any{"size": 72, "fps": 10, "frame": f.previewCalls, "keys": keys})
+}
+
+// live は name が映っているかを返す（kagelife の Engine.Live と同じ定義。mu を持って呼ぶ）。
+// active と同じ名前でコンパイルに成功しているか、フェード中で fade.target と同じ名前なら映っている。
+func (f *fakeControl) live(name string) bool {
+	if f.active == name && !f.failed[name] {
+		return true
+	}
+	return f.fading && f.target == name
+}
+
+// fakeSlotLiveMessage は kagelife の slotLiveMessage（internal/control/llmslots.go）と同じ文面を返す。
+func fakeSlotLiveMessage(name string, slots []string) string {
+	others := slices.DeleteFunc(slices.Clone(slots), func(s string) bool { return s == name })
+	msg := "shader " + name + " is on screen (active, or the target of a running crossfade) and cannot be written"
+	if len(others) == 0 {
+		return msg + "; wait until it is off screen"
+	}
+	return msg + "; write the other reserved slot instead (" + strings.Join(others, ", ") + ")"
+}
+
+// checkLLMSlot は -llm-slots が有効なとき 403 forbidden_name / 409 slot_live を書いて false を返す。
+func (f *fakeControl) checkLLMSlot(w http.ResponseWriter, name string) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if len(f.llmSlots) == 0 {
+		return true
+	}
+	if !slices.Contains(f.llmSlots, name) {
+		writeFakeErr(w, http.StatusForbidden, "forbidden_name",
+			"this kagelife runs with -llm-slots; PUT may write only the reserved LLM slots ("+strings.Join(f.llmSlots, ", ")+")")
+		return false
+	}
+	if f.live(name) {
+		writeFakeErr(w, http.StatusConflict, "slot_live", fakeSlotLiveMessage(name, f.llmSlots))
+		return false
+	}
+	return true
 }
 
 func (f *fakeControl) getShader(w http.ResponseWriter, r *http.Request) {
@@ -181,6 +274,16 @@ func (f *fakeControl) putShader(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	if !fakeNameRe.MatchString(name) {
 		writeFakeErr(w, http.StatusBadRequest, "invalid_name", "shader name must match ^[a-z0-9][a-z0-9_-]{0,63}$")
+		return
+	}
+	f.mu.Lock()
+	hook := f.beforePut
+	f.mu.Unlock()
+	if hook != nil {
+		hook(name)
+	}
+	// 判定の順は 名前 400 → 403 → 409 → 本文（kagelife の putShader）。
+	if !f.checkLLMSlot(w, name) {
 		return
 	}
 	var req struct {
@@ -217,6 +320,7 @@ func (f *fakeControl) putShader(w http.ResponseWriter, r *http.Request) {
 	defer f.mu.Unlock()
 	_, existed := f.sources[name]
 	f.sources[name] = body.Source
+	delete(f.failed, name)
 	if !existed {
 		f.order = append(f.order, name)
 	}
