@@ -146,6 +146,7 @@ def test_write_atomic_creates_parent_and_leaves_no_temp(tmp_path):
 
     assert json.loads(out.read_text(encoding="utf-8")) == {"title": "日本語の曲"}
     assert sorted(p.name for p in out.parent.iterdir()) == ["now_playing.json"]
+    assert out.stat().st_mode & 0o777 == 0o644
 
 
 def test_write_atomic_keeps_old_file_when_write_fails(tmp_path):

@@ -59,6 +59,8 @@ def write_atomic(path: Path, obj: Any) -> None:
             f.write("\n")
             f.flush()
             os.fsync(f.fileno())
+        # mkstemp は 0600 で作る。読み手（Claude など）が別の利用者でも読めるようにする
+        os.chmod(tmp, 0o644)
         os.replace(tmp, path)
     except BaseException:
         try:
@@ -269,6 +271,21 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     return p.parse_args(argv)
 
 
+def quiet_pyrekordbox() -> None:
+    """pyrekordbox の警告（OS linux not supported、Rekordbox is running! など）を抑える。
+
+    どれも読み取りには関係しない。pyrekordbox は import 時に自分の handler と
+    level を付けるので、先に import してから level を上げる。
+    """
+    try:
+        import pyrekordbox  # noqa: F401
+    except ImportError:
+        return
+    for name in list(logging.root.manager.loggerDict):
+        if name == "pyrekordbox" or name.startswith("pyrekordbox."):
+            logging.getLogger(name).setLevel(logging.ERROR)
+
+
 def run_once(source: RekordboxHistorySource) -> int:
     track = source.latest()
     result = {
@@ -284,6 +301,7 @@ def run_forever(watcher: Watcher, interval: float) -> int:
     while True:
         try:
             payload = watcher.poll()
+            log.debug("読み取り: 履歴 %s 行", getattr(watcher.source, "last_count", "?"))
             if payload:
                 log.info("新しい曲: %s / %s", payload["artist"], payload["title"])
         except Exception as e:  # 一時的な読み損ないで止めない
@@ -293,13 +311,10 @@ def run_forever(watcher: Watcher, interval: float) -> int:
 
 def main(argv: Optional[list[str]] = None) -> int:
     args = parse_args(argv)
-    logging.basicConfig(
-        level=logging.DEBUG if args.verbose else logging.INFO,
-        format="%(asctime)s %(levelname)s %(message)s",
-    )
-    # pyrekordbox の「Rekordbox is running!」などの警告は読み取りには関係しないので抑える
-    if not args.verbose:
-        logging.getLogger("pyrekordbox").setLevel(logging.ERROR)
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    log.setLevel(logging.DEBUG if args.verbose else logging.INFO)
+    # -v でも pyrekordbox は静かにしておく（pyrekordbox は DEBUG で鍵をログに出すため）
+    quiet_pyrekordbox()
     source = RekordboxHistorySource(args.db_dir)
     if args.once:
         return run_once(source)
