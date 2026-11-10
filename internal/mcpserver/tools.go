@@ -484,4 +484,16 @@ func registerTools(srv *mcp.Server, c *client) {
 	}, func(_ context.Context, _ *mcp.CallToolRequest, _ noArgs) (*mcp.CallToolResult, any, error) {
 		return text(kageGuide), nil, nil
 	})
+
+	mcp.AddTool(srv, &mcp.Tool{
+		Name: "get_previews",
+		Description: "Return a small preview of the shader on each number key 1-9: for each key its number, shader name and whether it failed to compile, " +
+			"followed by a 72x72 JPEG image of that shader drawn alone with the current Time and Beat. " +
+			"Use it to look at what you wrote before crossfading to it. " +
+			"Each call makes kagelife draw these demo previews for about 2 seconds (extra GPU work). Do not call it repeatedly or in a loop: once per new look is enough. " +
+			"The images are not the composite on screen (crossfades are not drawn); get_state tells what is active. " +
+			"If kagelife was started with -previews=false, nothing is drawn and the reply says so.",
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, _ noArgs) (*mcp.CallToolResult, any, error) {
+		return getPreviews(ctx, c), nil, nil
+	})
 }

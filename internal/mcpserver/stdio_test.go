@@ -3,6 +3,7 @@ package mcpserver
 import (
 	"bufio"
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"io"
 	"os"
@@ -135,7 +136,7 @@ func TestStdioRawJSONRPC(t *testing.T) {
 
 	p.send(`{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}`)
 	list := string(p.recv(2).Result)
-	for _, n := range []string{"get_state", "list_shaders", "read_shader", "write_shader", "switch_shader", "crossfade", "set_bpm", "get_kage_guide", "write_back_slot"} {
+	for _, n := range []string{"get_state", "list_shaders", "read_shader", "write_shader", "switch_shader", "crossfade", "set_bpm", "get_kage_guide", "write_back_slot", "get_previews"} {
 		if !strings.Contains(list, `"`+n+`"`) {
 			t.Fatalf("tools/list missing %s", n)
 		}
@@ -149,6 +150,21 @@ func TestStdioRawJSONRPC(t *testing.T) {
 	p.send(`{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"write_shader","arguments":{"name":"x","source":"package main"}}}`)
 	if r := string(p.recv(4).Result); !strings.Contains(r, `"isError":true`) || !strings.Contains(r, "unit_pixels_required") {
 		t.Fatalf("write_shader: %s", r)
+	}
+
+	// get_previews の画像は、JPEG の生のバイト列を MCP の線上で 1 回だけ base64 にしたもの（二重に符号化しない）。
+	f.with(func() {
+		f.previewFrames = [][]fakePreviewKey{{{Key: "1", Name: "01_uv", JPEG: []byte("\xff\xd8\xffJPEG")}}}
+	})
+	p.send(`{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"get_previews","arguments":{}}}`)
+	if r := string(p.recv(5).Result); !strings.Contains(r, `"type":"image"`) || !strings.Contains(r, `"mimeType":"image/jpeg"`) ||
+		!strings.Contains(r, `"data":"`+base64.StdEncoding.EncodeToString([]byte("\xff\xd8\xffJPEG"))+`"`) {
+		t.Fatalf("get_previews: %s", r)
+	}
+
+	p.send(`{"jsonrpc":"2.0","id":6,"method":"prompts/list","params":{}}`)
+	if r := string(p.recv(6).Result); !strings.Contains(r, `"vj_song"`) {
+		t.Fatalf("prompts/list: %s", r)
 	}
 
 	_ = p.stdin.Close() // EOF で正常終了する

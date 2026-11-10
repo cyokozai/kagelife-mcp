@@ -85,7 +85,7 @@ func wantContains(t *testing.T, got string, subs ...string) {
 
 // ── tools/list ─────────────────────────────────────────────
 
-func TestListToolsHasNineToolsWithRequired(t *testing.T) {
+func TestListToolsHasTenToolsWithRequired(t *testing.T) {
 	cs := connect(t, Config{ControlFile: filepath.Join(t.TempDir(), "none.json")})
 	res, err := cs.ListTools(context.Background(), nil)
 	if err != nil {
@@ -102,6 +102,8 @@ func TestListToolsHasNineToolsWithRequired(t *testing.T) {
 		"get_kage_guide": nil,
 		// write_back_slot は -llm-slots の予約名のうち映っていない側へ書く。
 		"write_back_slot": {"source"},
+		// get_previews は GET /v1/previews（数字キーのシェーダの 72x72 の JPEG）を画像で返す。
+		"get_previews": nil,
 	}
 	if len(res.Tools) != len(want) {
 		t.Fatalf("got %d tools, want %d", len(res.Tools), len(want))
