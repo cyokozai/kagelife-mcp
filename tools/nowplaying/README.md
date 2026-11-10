@@ -1,4 +1,4 @@
-# nowplaying — rekordbox の「今かかっている曲」を書き出す
+# nowplaying（rekordbox の「今かかっている曲」を書き出す）
 
 rekordbox の再生履歴（master.db）を数秒ごとに読み、新しい曲が載ったら
 `~/.cache/kagelife/now_playing.json` に書き出します。Claude はこのファイルを読んで、次のシェーダを書きます。
@@ -107,4 +107,4 @@ master.db は暗号化されています。この道具は pyrekordbox を使っ
 - ヘッドホンでの頭出しが履歴に載るか
 - `played_at` の `+00:00` が本当に UTC か
 - rekordbox が WAL を書き戻す（checkpoint）瞬間に写したときの振る舞い。写し直しで避けるつもりですが、試していません
-- rekordbox の版が上がったときに読めるか
+- rekordbox を更新したあとも読めるか
