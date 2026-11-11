@@ -479,7 +479,8 @@ func registerTools(srv *mcp.Server, c *client) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name: "get_kage_guide",
 		Description: "Return a concise guide to writing Kage shaders for kagelife: language limits (Kage is Go-like but not Go), " +
-			"the required //kage:unit pixels directive and Fragment signature, the uniforms kagelife provides (Time, Resolution, Beat, Cursor, Frame, Random), " +
+			"the required //kage:unit pixels directive and Fragment signature, the uniforms kagelife provides (Time, Resolution, Beat, Cursor, Frame, Random, " +
+			"and AudioBass, AudioMid, AudioHigh, AudioOnset, which are 0 unless kagelife was started with -audio), " +
 			"a minimal template and VJ performance tips. Read this before your first write_shader. Works even when kagelife is not running.",
 	}, func(_ context.Context, _ *mcp.CallToolRequest, _ noArgs) (*mcp.CallToolResult, any, error) {
 		return text(kageGuide), nil, nil

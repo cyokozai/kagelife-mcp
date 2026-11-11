@@ -30,6 +30,10 @@ names and types (names must start with an upper-case letter):
     var Cursor vec2       // mouse position in pixels of that image
     var Frame int         // frame counter
     var Random float      // new random value 0..1 every frame
+    var AudioBass float   // level of the 20-150 Hz band, 0..1
+    var AudioMid float    // level of the 150 Hz-2 kHz band, 0..1
+    var AudioHigh float   // level of the 2-16 kHz band, 0..1
+    var AudioOnset float  // 1 on an onset, decays to 0 (time constant 150 ms)
 
 Beat always runs: before anyone taps the tempo or calls set_bpm it follows
 the default 120 BPM. The tempo is always within 40-300 BPM.
@@ -43,6 +47,17 @@ With -render-scale below 1, kagelife draws at a smaller size and scales it
 up: Resolution and Cursor are then smaller than the window, while get_state
 still reports the window size as resolution. Never hard-code the get_state
 resolution in a shader; always use the Resolution uniform.
+
+The four Audio* uniforms follow the sound in the venue. They only carry
+values when kagelife was started with -audio; without it they are always 0.
+- Make the shader work without sound, so that the picture
+  still looks good when all four are 0. Treat the audio values as extra
+  motion on top of a picture that already works.
+- The audio values arrive regardless of the beat. Do not drive the whole
+  screen's brightness up and down with them directly: that can make the
+  picture flash more than 3 times per second. Use them instead for
+  shape, position, hue and thin lines (a ring radius, a line width, a hue
+  shift).
 
 3. TYPES
 --------
