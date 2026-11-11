@@ -1,0 +1,2 @@
+pyrekordbox==0.5.0
+pytest==8.3.3

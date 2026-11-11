@@ -52,5 +52,5 @@ jobs:
       - name: golangci-lint
         uses: golangci/golangci-lint-action@v9
         with:
-          version: v2.14
+          version: v2.15.0
           args: --max-same-issues=0 --max-issues-per-linter=0

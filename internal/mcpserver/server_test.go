@@ -85,7 +85,7 @@ func wantContains(t *testing.T, got string, subs ...string) {
 
 // ── tools/list ─────────────────────────────────────────────
 
-func TestListToolsHasEightToolsWithRequired(t *testing.T) {
+func TestListToolsHasTenToolsWithRequired(t *testing.T) {
 	cs := connect(t, Config{ControlFile: filepath.Join(t.TempDir(), "none.json")})
 	res, err := cs.ListTools(context.Background(), nil)
 	if err != nil {
@@ -100,6 +100,10 @@ func TestListToolsHasEightToolsWithRequired(t *testing.T) {
 		"crossfade":      {"name"},
 		"set_bpm":        {"bpm"},
 		"get_kage_guide": nil,
+		// write_back_slot は -llm-slots の予約名のうち映っていない側へ書く。
+		"write_back_slot": {"source"},
+		// get_previews は GET /v1/previews（数字キーのシェーダの 72x72 の JPEG）を画像で返す。
+		"get_previews": nil,
 	}
 	if len(res.Tools) != len(want) {
 		t.Fatalf("got %d tools, want %d", len(res.Tools), len(want))
@@ -601,6 +605,7 @@ func TestGetKageGuide(t *testing.T) {
 		"func Fragment(dstPos vec4, srcPos vec2, color vec4) vec4",
 		"atan2", "struct", "switch",
 		"Time", "Resolution", "Beat", "Cursor", "Frame", "Random",
+		"AudioBass", "AudioMid", "AudioHigh", "AudioOnset",
 		"dstPos.xy / Resolution",
 		"60",
 	)
@@ -731,6 +736,45 @@ func TestKageGuideSaysBeatRunsAtDefaultBPM(t *testing.T) {
 	wantContains(t, txt, "120 BPM", "40-300")
 }
 
+// 音の予約 uniform（計画 W2、2026-11-09 決定）。値が入るのは kagelife を -audio 付きで
+// 起動したときだけで、無ければ常に 0。手引きは 0 でも見られる絵と、明るさの明滅を避けることを書く。
+func TestKageGuideExplainsAudioUniforms(t *testing.T) {
+	cs := connect(t, Config{ControlFile: filepath.Join(t.TempDir(), "none.json")})
+	txt := mustOK(t, cs, "get_kage_guide", nil)
+	wantContains(t, txt,
+		"var AudioBass float",
+		"var AudioMid float",
+		"var AudioHigh float",
+		"var AudioOnset float",
+		"20-150 Hz", "150 Hz-2 kHz", "2-16 kHz",
+		"150 ms",
+		"-audio",
+		"always 0",
+		"still looks good when all four are 0",
+		"3 times per second",
+		"brightness",
+		"shape, position, hue",
+	)
+}
+
+func TestGetKageGuideDescriptionListsAudioUniforms(t *testing.T) {
+	cs := connect(t, Config{ControlFile: filepath.Join(t.TempDir(), "none.json")})
+	res, err := cs.ListTools(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tool := range res.Tools {
+		if tool.Name != "get_kage_guide" {
+			continue
+		}
+		wantContains(t, tool.Description,
+			"Time", "Resolution", "Beat", "Cursor", "Frame", "Random",
+			"AudioBass", "AudioMid", "AudioHigh", "AudioOnset", "-audio")
+		return
+	}
+	t.Fatal("get_kage_guide not found")
+}
+
 func TestUsageMentionsBinaryName(t *testing.T) {
 	if !strings.Contains(usage, "kagelife-mcp") || strings.Contains(usage, "kagelife mcp") {
 		t.Fatalf("usage = %q", usage)
@@ -750,4 +794,83 @@ func TestGetStateDescriptionExplainsLastErrorReset(t *testing.T) {
 		}
 	}
 	t.Fatal("get_state not found")
+}
+
+// ── 本体 dev（#37・#41・ADR-006 補足 11）との突き合わせ ───────────
+
+func toolDescription(t *testing.T, name string) string {
+	t.Helper()
+	cs := connect(t, Config{ControlFile: filepath.Join(t.TempDir(), "none.json")})
+	res, err := cs.ListTools(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tool := range res.Tools {
+		if tool.Name == name {
+			return tool.Description
+		}
+	}
+	t.Fatalf("%s not found", name)
+	return ""
+}
+
+// set_bpm は呼んだ時刻を拍頭にし、タップの履歴を捨てる（本体 #41、PRD FR-013）。
+func TestSetBPMDescriptionWarnsAboutTapping(t *testing.T) {
+	d := toolDescription(t, "set_bpm")
+	wantContains(t, d, "beat start", "discards", "tapping")
+}
+
+func TestKageGuideBeatWarnsAboutSetBPM(t *testing.T) {
+	cs := connect(t, Config{ControlFile: filepath.Join(t.TempDir(), "none.json")})
+	txt := mustOK(t, cs, "get_kage_guide", nil)
+	wantContains(t, txt, "set_bpm", "discards", "tapping")
+}
+
+// -render-scale が 1 未満なら uniform の Resolution と Cursor は縮み、state の resolution は画面のまま（本体 #37）。
+func TestGetStateDescriptionSaysUseResolutionUniform(t *testing.T) {
+	d := toolDescription(t, "get_state")
+	wantContains(t, d, "-render-scale", "Resolution uniform", "hard-code")
+}
+
+func TestKageGuideResolutionMayDifferFromScreen(t *testing.T) {
+	cs := connect(t, Config{ControlFile: filepath.Join(t.TempDir(), "none.json")})
+	txt := mustOK(t, cs, "get_kage_guide", nil)
+	wantContains(t, txt, "-render-scale", "get_state", "hard-code", "Cursor")
+}
+
+// PUT の loop_timeout ではファイルが書けている場合がある（ADR-006 補足 11）。
+func TestWriteShaderLoopTimeoutMayHaveWritten(t *testing.T) {
+	f, cs := setup(t)
+	f.setOverride(func(w http.ResponseWriter, _ *http.Request) {
+		writeFakeErr(w, http.StatusServiceUnavailable, "loop_timeout", "game loop did not respond within 2s")
+	})
+	txt := mustErr(t, cs, "write_shader", map[string]any{"name": "03_new", "source": "//kage:unit pixels\n"})
+	wantContains(t, txt, "loop_timeout", "may already have been written", "read_shader", "03_new", "get_state")
+}
+
+func TestWriteShaderHTTPTimeoutMayHaveWritten(t *testing.T) {
+	f := newFakeControl(t)
+	release := make(chan struct{})
+	t.Cleanup(func() { close(release) })
+	f.setOverride(func(_ http.ResponseWriter, r *http.Request) {
+		select {
+		case <-release:
+		case <-r.Context().Done():
+		}
+	})
+	cs := connect(t, Config{ControlFile: f.writeDiscovery(t, t.TempDir()), Timeout: 200 * time.Millisecond})
+	txt := mustErr(t, cs, "write_shader", map[string]any{"name": "03_new", "source": "//kage:unit pixels\n"})
+	wantContains(t, txt, "did not respond", "may already have been written", "read_shader")
+}
+
+// 書き込み以外のツールには、書けている場合があるという案内を付けない。
+func TestLoopTimeoutOnNonWriteHasNoWriteHint(t *testing.T) {
+	f, cs := setup(t)
+	f.setOverride(func(w http.ResponseWriter, _ *http.Request) {
+		writeFakeErr(w, http.StatusServiceUnavailable, "loop_timeout", "game loop did not respond within 2s")
+	})
+	txt := mustErr(t, cs, "switch_shader", map[string]any{"name": "01_uv"})
+	if strings.Contains(txt, "may already have been written") {
+		t.Errorf("switch_shader got the write hint:\n%s", txt)
+	}
 }
