@@ -4,7 +4,8 @@
   push_now_playing.sh [host]            既定の host は vj。変化を見張り続ける
   push_now_playing.sh --once [host]     1 回だけ送って終わる
 
-- 送り先では「同じフォルダの一時ファイルに書く -> mv」で置き換える。読み手が書きかけを読むことは無い
+- 送り先では「同じフォルダの一時ファイルに書く -> 長さを確かめる -> mv」で置き換える。
+  読み手が書きかけを読むことは無く、途中で切れた中身で置き換えることも無い
 - 書きかけ・壊れた JSON は送らない。同じ中身は 2 度送らない（覚えているのは動いている間だけ）
 - 送れなかったら、中身が変わったときか --retry 秒後に送り直す。送れなかったあとは、前に送れた中身も送り直す
 - ssh は環境変数 KAGELIFE_PUSH_SSH で差し替えられる（テスト用）
@@ -40,11 +41,18 @@ def remote_dir_expr(d):
     return shlex.quote(d)
 
 
-def remote_script(d):
+def remote_script(d, size):
+    """一時ファイルに受け、届いたバイト数が size と一致したときだけ置き換える。
+
+    途中で切れたら一時ファイルを消し、元のファイルを残して失敗を返す。
+    BSD の wc -c は数の前に空白を付けるので、$n を引用符で囲まずに数として比べる。
+    """
     q = remote_dir_expr(d)
     return (
-        "d=%s && mkdir -p \"$d\" && t=\"$d/.%s.tmp.$$\" && cat > \"$t\" && mv -f \"$t\" \"$d/%s\""
-        % (q, NAME, NAME)
+        "d=%s && mkdir -p \"$d\" && t=\"$d/.%s.tmp.$$\" && "
+        "{ cat > \"$t\" && n=$(wc -c < \"$t\") && [ $n -eq %d ] && mv -f \"$t\" \"$d/%s\" || "
+        "{ rm -f \"$t\"; echo \"incomplete transfer (expected %d bytes)\" >&2; exit 1; }; }"
+        % (q, NAME, size, NAME, size)
     )
 
 
@@ -61,7 +69,7 @@ def read_valid(path):
 
 def send(raw, host, rdir, timeout):
     ssh = os.environ.get("KAGELIFE_PUSH_SSH") or "ssh"
-    argv = [ssh] + SSH_OPTS + [host, remote_script(rdir)]
+    argv = [ssh] + SSH_OPTS + [host, remote_script(rdir, len(raw))]
     try:
         p = subprocess.run(argv, input=raw, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=timeout)
     except (OSError, subprocess.TimeoutExpired) as e:

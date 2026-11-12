@@ -5,6 +5,7 @@
 
 import json
 import os
+import shutil
 import stat
 import subprocess
 import tempfile
@@ -188,6 +189,51 @@ class Retry(Base):
         p = self.run_for(5, "--once")
         self.assertEqual(p.returncode, 1)
         self.assertFalse(self.dest().exists())
+
+
+class Length(Base):
+    """先方は届いたバイト数を確かめてから置き換える。"""
+
+    def remote_files(self):
+        return sorted(x.name for x in self.remote.iterdir())
+
+    def test_cut_stream_keeps_old_file(self):
+        self.put({"history_id": "h1", "title": "A"})
+        self.assertEqual(self.run_for(5, "--once").returncode, 0)
+        old = self.dest().read_bytes()
+        self.put({"history_id": "h2", "title": "B"})
+        self.cut.write_text("x")
+        p = self.run_for(5, "--once")
+        self.assertEqual(p.returncode, 1, p.stderr)
+        self.assertEqual(self.dest().read_bytes(), old)
+        self.assertEqual(self.remote_files(), ["now_playing.json"])  # temp file removed
+
+    def test_full_stream_replaces(self):
+        self.put({"history_id": "h1", "title": "A"})
+        self.assertEqual(self.run_for(5, "--once").returncode, 0)
+        self.put({"history_id": "h2", "title": "B"})
+        p = self.run_for(5, "--once")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertEqual(self.dest().read_bytes(), self.src.read_bytes())
+        self.assertEqual(self.remote_files(), ["now_playing.json"])
+
+    def test_padded_wc_output_is_accepted(self):
+        # BSD wc -c prints the count with leading spaces.
+        real = shutil.which("wc")
+        bindir = Path(self._td.name) / "bin"
+        bindir.mkdir()
+        wc = bindir / "wc"
+        wc_log = Path(self._td.name) / "wc.log"
+        wc.write_text('#!/bin/sh\nout=$(printf "%%8s" "$(%s "$@")")\nprintf "[%%s]\\n" "$out" >> "%s"\nprintf "%%s\\n" "$out"\n'
+                      % (real, wc_log))
+        wc.chmod(wc.stat().st_mode | stat.S_IEXEC)
+        self.env["PATH"] = "%s:%s" % (bindir, self.env.get("PATH", ""))
+        self.put({"history_id": "h1", "title": "A"})
+        p = self.run_for(5, "--once")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertEqual(self.dest().read_bytes(), self.src.read_bytes())
+        # the padded form was really used
+        self.assertEqual(wc_log.read_text(), "[%8d]\n" % self.src.stat().st_size)
 
 
 class RemoteDir(Base):
