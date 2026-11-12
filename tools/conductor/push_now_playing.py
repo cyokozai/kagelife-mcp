@@ -6,7 +6,7 @@
 
 - 送り先では「同じフォルダの一時ファイルに書く -> mv」で置き換える。読み手が書きかけを読むことは無い
 - 書きかけ・壊れた JSON は送らない。同じ中身は 2 度送らない（覚えているのは動いている間だけ）
-- 送れなかったら、中身が変わったときか --retry 秒後に送り直す
+- 送れなかったら、中身が変わったときか --retry 秒後に送り直す。送れなかったあとは、前に送れた中身も送り直す
 - ssh は環境変数 KAGELIFE_PUSH_SSH で差し替えられる（テスト用）
 
 macOS の /usr/bin/python3（3.9）で動くよう、標準ライブラリだけを使う。
@@ -112,6 +112,9 @@ def main(argv=None):
                     sent, failed = raw, None
                     log("sent %d bytes" % len(raw))
                 else:
+                    # 先方に届いたかは分からない（書けたあとで ssh が切れることもある）。
+                    # 覚えている sent を消し、手元が前の中身に戻ったときも送り直す。
+                    sent = None
                     failed, next_retry = raw, now + args.retry
             time.sleep(args.interval)
     except KeyboardInterrupt:
