@@ -91,6 +91,7 @@ VJ 機: ~/.cache/kagelife/now_playing.json  <- Stream Deck: ~/.cache/kagelife/cu
 
 - `changed` は `start`（前回の状態が無く、今の曲が読めた）・`song`・`cue` の組み合わせ。曲と合図が同時なら `["song", "cue"]`
 - 前回の状態は `~/.cache/kagelife/conductor_state.json` に持ちます。曲が同じなら、タグを直して書き換わっても出しません
+- `conductor_state.json` を読んでから書くまでは、`note_written.sh` と同じ鍵（同じフォルダの `conductor_state.json.lock`）で排他にします
 - `cue.json` は中身を読みません。更新時刻だけを見ます（U2 の中身が未定のため）
 - 書きかけ・壊れた JSON は読めなかったものとして次の周で読み直します
 - 終了コード: 0 = 変化あり、3 = `--timeout` で打ち切り、2 = 使い方の誤り

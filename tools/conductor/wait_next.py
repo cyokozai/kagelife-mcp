@@ -13,10 +13,12 @@ macOS の /usr/bin/python3（3.9）で動くよう、標準ライブラリだけ
 """
 
 import argparse
+import fcntl
 import json
 import os
 import sys
 import time
+from contextlib import contextmanager
 from datetime import datetime, timezone
 
 STATE_NAME = "conductor_state.json"
@@ -45,6 +47,20 @@ def write_json_atomic(path, obj):
         json.dump(obj, f, ensure_ascii=False, indent=2)
         f.write("\n")
     os.replace(tmp, path)
+
+
+@contextmanager
+def state_lock(path):
+    """conductor_state.json を読む・変える・書くまでを排他にする。
+
+    鍵は同じフォルダの conductor_state.json.lock（slots.py と同じ鍵）。
+    """
+    with open(path + ".lock", "a") as f:
+        fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(f.fileno(), fcntl.LOCK_UN)
 
 
 def cue_mtime_ns(path):
@@ -76,9 +92,11 @@ class Watcher(object):
 
     def save_state(self, history_id, cue_ns):
         # last_slot（note_written.sh が書く）など、他のキーは残す。--reset でも消さない。
-        state = self.load_state() or {}
-        state.update({"history_id": history_id, "cue_mtime_ns": cue_ns, "updated_at": now_iso()})
-        write_json_atomic(self.state_path, state)
+        # 読んでから書くまでの間に note_written.sh が書くと、その更新を消してしまうので鍵をかける。
+        with state_lock(self.state_path):
+            state = self.load_state() or {}
+            state.update({"history_id": history_id, "cue_mtime_ns": cue_ns, "updated_at": now_iso()})
+            write_json_atomic(self.state_path, state)
 
     def event(self, changed, song, prev_hid, cue_ns):
         return {
