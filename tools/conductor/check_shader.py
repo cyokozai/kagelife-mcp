@@ -33,7 +33,7 @@ UNIFORMS = {
     "Cursor": "vec2",
 }
 
-# 1 画素あたりのループの回数の目安。04_warp（20 回、本体が重い）が HD 630 で 37〜45fps まで落ちた。
+# 1 画素あたりのループの回数の目安。04_warp（20 回、本体が重い）は HD 630 で、重ね表示ありで 36fps 前後、なしで 45fps 前後。
 LOOP_WARN = 16
 LOOP_ERROR = 64
 
@@ -256,7 +256,7 @@ def scan(code, rep):
         rep.add(
             "warn",
             "loop_heavy",
-            "about %d loop iterations per pixel (>= %d); 04_warp ran 20 and fell to 37-45fps, keep the body light"
+            "about %d loop iterations per pixel (>= %d); 04_warp runs 20 at about 36fps with the overlay, 45fps without; keep the body light"
             % (total, LOOP_WARN),
         )
 

@@ -260,7 +260,7 @@ class Py39Syntax(unittest.TestCase):
     def test_scripts_parse_as_39(self):
         import ast
 
-        for name in ("check_shader.py", "wait_next.py"):
+        for name in ("check_shader.py", "wait_next.py", "slots.py", "push_now_playing.py"):
             src = (TOOL / name).read_text(encoding="utf-8")
             ast.parse(src, filename=name, feature_version=(3, 9))
 
