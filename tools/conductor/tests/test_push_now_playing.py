@@ -5,6 +5,7 @@
 
 import json
 import os
+import shutil
 import stat
 import subprocess
 import tempfile
@@ -17,12 +18,22 @@ SH = HERE.parent / "push_now_playing.sh"
 
 FAKE_SSH = """#!/bin/sh
 # fake ssh: log argv, fail if $FAKE_FAIL exists, else run the last arg locally.
+# $FAKE_LATE_FAIL: run the remote command (it lands), then report failure as if the link dropped.
+# $FAKE_CUT: pass only the first 5 bytes of stdin, as if the stream was cut in transit.
 printf '%s\\n' "$*" >> "$FAKE_LOG"
 if [ -e "$FAKE_FAIL" ]; then
   cat > /dev/null
   exit 255
 fi
 for a in "$@"; do last=$a; done
+if [ -e "$FAKE_LATE_FAIL" ]; then
+  sh -c "$last"
+  exit 255
+fi
+if [ -e "$FAKE_CUT" ]; then
+  head -c 5 | sh -c "$last"
+  exit $?
+fi
 exec sh -c "$last"
 """
 
@@ -36,7 +47,9 @@ class Base(unittest.TestCase):
         self.src = self.src_dir / "now_playing.json"
         self.remote = d / "remote" / "kage cache"  # space on purpose
         self.log = d / "ssh.log"
-        self.fail = d / "fail.flag"
+        self.fail_flag = d / "fail.flag"
+        self.late_fail = d / "late_fail.flag"
+        self.cut = d / "cut.flag"
         self.fake = d / "u3cd-fake-ssh"
         self.fake.write_text(FAKE_SSH)
         self.fake.chmod(self.fake.stat().st_mode | stat.S_IEXEC)
@@ -44,7 +57,9 @@ class Base(unittest.TestCase):
             os.environ,
             KAGELIFE_PUSH_SSH=str(self.fake),
             FAKE_LOG=str(self.log),
-            FAKE_FAIL=str(self.fail),
+            FAKE_FAIL=str(self.fail_flag),
+            FAKE_LATE_FAIL=str(self.late_fail),
+            FAKE_CUT=str(self.cut),
         )
 
     def tearDown(self):
@@ -74,6 +89,20 @@ class Base(unittest.TestCase):
 
     def dest(self):
         return self.remote / "now_playing.json"
+
+    def remote_hid(self):
+        try:
+            return json.loads(self.dest().read_text())["history_id"]
+        except (OSError, ValueError, KeyError):
+            return None
+
+    def wait_for(self, cond, limit=5.0):
+        end = time.monotonic() + limit
+        while time.monotonic() < end:
+            if cond():
+                return
+            time.sleep(0.02)
+        self.fail("condition not met within %.1fs" % limit)
 
 
 class Send(Base):
@@ -127,10 +156,10 @@ class Send(Base):
 class Retry(Base):
     def test_failure_is_retried_after_interval(self):
         self.put({"history_id": "h1"})
-        self.fail.write_text("x")
+        self.fail_flag.write_text("x")
         p = self.start(2.0)
         time.sleep(0.5)
-        self.fail.unlink()
+        self.fail_flag.unlink()
         out, err = p.communicate(timeout=30)
         self.assertGreaterEqual(len(self.calls()), 2)
         self.assertEqual(json.loads(self.dest().read_text())["history_id"], "h1")
@@ -139,12 +168,72 @@ class Retry(Base):
         time.sleep(0.1)
         self.assertEqual(len(self.calls()), n)
 
+    def test_failure_forgets_what_was_sent(self):
+        # B lands on the VJ machine but ssh reports failure; then the Mac goes back to A.
+        # A must be sent again, or the VJ machine keeps showing B.
+        a = {"history_id": "h1", "title": "A"}
+        self.put(a)
+        p = self.start(3.0)
+        self.wait_for(lambda: self.remote_hid() == "h1")
+        self.late_fail.write_text("x")
+        self.put({"history_id": "h2", "title": "B"})
+        self.wait_for(lambda: self.remote_hid() == "h2" and len(self.calls()) >= 2)
+        self.late_fail.unlink()
+        self.put(a)
+        p.communicate(timeout=30)
+        self.assertEqual(self.remote_hid(), "h1")
+
     def test_once_reports_failure(self):
         self.put({"history_id": "h1"})
-        self.fail.write_text("x")
+        self.fail_flag.write_text("x")
         p = self.run_for(5, "--once")
         self.assertEqual(p.returncode, 1)
         self.assertFalse(self.dest().exists())
+
+
+class Length(Base):
+    """先方は届いたバイト数を確かめてから置き換える。"""
+
+    def remote_files(self):
+        return sorted(x.name for x in self.remote.iterdir())
+
+    def test_cut_stream_keeps_old_file(self):
+        self.put({"history_id": "h1", "title": "A"})
+        self.assertEqual(self.run_for(5, "--once").returncode, 0)
+        old = self.dest().read_bytes()
+        self.put({"history_id": "h2", "title": "B"})
+        self.cut.write_text("x")
+        p = self.run_for(5, "--once")
+        self.assertEqual(p.returncode, 1, p.stderr)
+        self.assertEqual(self.dest().read_bytes(), old)
+        self.assertEqual(self.remote_files(), ["now_playing.json"])  # temp file removed
+
+    def test_full_stream_replaces(self):
+        self.put({"history_id": "h1", "title": "A"})
+        self.assertEqual(self.run_for(5, "--once").returncode, 0)
+        self.put({"history_id": "h2", "title": "B"})
+        p = self.run_for(5, "--once")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertEqual(self.dest().read_bytes(), self.src.read_bytes())
+        self.assertEqual(self.remote_files(), ["now_playing.json"])
+
+    def test_padded_wc_output_is_accepted(self):
+        # BSD wc -c prints the count with leading spaces.
+        real = shutil.which("wc")
+        bindir = Path(self._td.name) / "bin"
+        bindir.mkdir()
+        wc = bindir / "wc"
+        wc_log = Path(self._td.name) / "wc.log"
+        wc.write_text('#!/bin/sh\nout=$(printf "%%8s" "$(%s "$@")")\nprintf "[%%s]\\n" "$out" >> "%s"\nprintf "%%s\\n" "$out"\n'
+                      % (real, wc_log))
+        wc.chmod(wc.stat().st_mode | stat.S_IEXEC)
+        self.env["PATH"] = "%s:%s" % (bindir, self.env.get("PATH", ""))
+        self.put({"history_id": "h1", "title": "A"})
+        p = self.run_for(5, "--once")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertEqual(self.dest().read_bytes(), self.src.read_bytes())
+        # the padded form was really used
+        self.assertEqual(wc_log.read_text(), "[%8d]\n" % self.src.stat().st_size)
 
 
 class RemoteDir(Base):

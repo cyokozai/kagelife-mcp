@@ -5,14 +5,16 @@
   slots.py back <active>  get_state の active から書く先を 1 行で出す（back_slot.sh）
 
 決め方: active が予約名の一方なら、もう一方。それ以外なら last_slot でない方。記録が無ければ最初の予約名。
-wait_next.py と同じ状態のファイルを使い、他のキーは消さない。
+wait_next.py と同じ状態のファイルを使い、他のキーは消さない。読んでから書くまでは同じ鍵で排他にする。
 終了コード: 0 = 成功、2 = 使い方の誤り。
 """
 
 import argparse
+import fcntl
 import json
 import os
 import sys
+from contextlib import contextmanager
 
 STATE_NAME = "conductor_state.json"
 DEFAULT_SLOTS = "llm_a,llm_b"
@@ -33,6 +35,20 @@ def write_state(path, obj):
         json.dump(obj, f, ensure_ascii=False, indent=2)
         f.write("\n")
     os.replace(tmp, path)
+
+
+@contextmanager
+def state_lock(path):
+    """conductor_state.json を読む・変える・書くまでを排他にする。
+
+    鍵は同じフォルダの conductor_state.json.lock（wait_next.py と同じ鍵）。
+    """
+    with open(path + ".lock", "a") as f:
+        fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(f.fileno(), fcntl.LOCK_UN)
 
 
 def back_slot(active, slots, last):
@@ -64,9 +80,10 @@ def main(argv=None):
             sys.stderr.write("note_written: %s is not a reserved slot (%s); nothing recorded\n" % (args.name, ", ".join(slots)))
             return 2
         os.makedirs(args.dir, exist_ok=True)
-        state = read_state(path)
-        state["last_slot"] = args.name
-        write_state(path, state)
+        with state_lock(path):
+            state = read_state(path)
+            state["last_slot"] = args.name
+            write_state(path, state)
         print(args.name)
         return 0
 
