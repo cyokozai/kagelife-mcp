@@ -460,6 +460,17 @@ class WatcherTest(TmpDir):
         self.assertIsNone(w.poll())
         self.assertFalse(self.out.exists())
 
+    def test_local_file_is_ignored_and_last_track_kept(self):
+        self.client.current = playing(30000)
+        w = self.watcher()
+        w.poll()
+        before = self.out.read_bytes()
+        self.clock.advance(3)
+        local = dict(track_item(), id=None, is_local=True, uri="spotify:local:a:b:c:200")
+        self.client.current = playing(1000, local)
+        self.assertIsNone(w.poll())
+        self.assertEqual(self.out.read_bytes(), before)
+
     def test_queue_skips_episodes(self):
         self.client.current = playing(30000)
         self.client.queue_items = [{"type": "episode", "id": "e1", "name": "Ep"}, track_item("n1")]
