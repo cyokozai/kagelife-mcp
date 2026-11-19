@@ -6,7 +6,12 @@ Spotify Web API で再生中の曲を数秒ごとに読み、曲が変わった�
 
 ## 早見表
 
-先に「Spotify のアプリ登録」を済ませ、Client ID を環境変数に入れておきます（`export KAGELIFE_SPOTIFY_CLIENT_ID=<Client ID>`）。
+先に「Spotify のアプリ登録」を済ませ、控えた Client ID を環境変数に入れておきます。引用符の中を実際の値に置き換えてください
+（`<Client ID>` のように山かっこで書いたまま打つと、zsh が parse error を出します）。
+
+```sh
+export KAGELIFE_SPOTIFY_CLIENT_ID='控えた Client ID'
+```
 
 | したいこと | コマンド（このフォルダで） |
 |---|---|
@@ -17,7 +22,7 @@ Spotify Web API で再生中の曲を数秒ごとに読み、曲が変わった�
 | テスト | `docker run --rm -v "$PWD/../conductor:/conductor:ro" --entrypoint python kagelife-nowplaying-spotify -m unittest discover -s /app/tests -v` |
 | 片付け | `docker rmi kagelife-nowplaying-spotify` |
 
-- `-e KAGELIFE_SPOTIFY_CLIENT_ID` は、手元の環境変数の値をそのままコンテナへ渡す書き方です。`--client-id <Client ID>` を付けても同じです
+- `-e KAGELIFE_SPOTIFY_CLIENT_ID` は、手元の環境変数の値をそのままコンテナへ渡す書き方です。`--client-id '控えた Client ID'` を付けても同じです
 - テストでは `tools/conductor` を `/conductor` にマウントします。マウントしないと、`wait_next.py` で読めるかを確かめるテストが飛ばされます（`skipped` と出ます）
 
 ## Spotify のアプリ登録
