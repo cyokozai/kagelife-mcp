@@ -3,6 +3,7 @@
 Runs with the standard library only: python -m unittest discover -s tests
 """
 
+import http.client
 import importlib.util
 import io
 import json
@@ -15,7 +16,7 @@ import threading
 import unittest
 import urllib.parse
 import urllib.request
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -23,6 +24,10 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent))
 
 import nowplaying_spotify as nps  # noqa: E402
+
+# keep the test output clean; assertLogs still sees the records it asks for
+nps.log.addHandler(logging.NullHandler())
+nps.log.propagate = False
 
 T0 = datetime(2026, 11, 21, 12, 0, 0, tzinfo=timezone.utc)
 SECRET_ACCESS = "ACCESS-SECRET-aaaa"
@@ -276,6 +281,20 @@ class ClientTest(unittest.TestCase):
         self.assertNotIn(SECRET_ACCESS, str(ctx.exception))
 
 
+class UrllibTransportTest(unittest.TestCase):
+    def test_broken_http_response_becomes_oserror(self):
+        real = urllib.request.urlopen
+
+        def broken(req, timeout=None):
+            raise http.client.IncompleteRead(b"partial")
+        urllib.request.urlopen = broken
+        try:
+            with self.assertRaises(OSError):
+                nps.urllib_transport("GET", "https://api.spotify.com/v1/me/player/queue", {})
+        finally:
+            urllib.request.urlopen = real
+
+
 # --- watcher: history_id, write-on-change ------------------------------------------
 
 
@@ -493,6 +512,111 @@ class WatcherTest(TmpDir):
         self.assertEqual(payload["title"], "Song A")
         self.assertFalse(self.out.exists())
 
+    def test_repeat_seen_late_after_near_end_gets_new_history_id(self):
+        # e.g. a 429 made us wait: the repeat is first seen 20 s into the second play
+        self.client.current = playing(195000)
+        w = self.watcher()
+        w.poll()
+        h1 = self.read_out()["history_id"]
+        self.clock.advance(25)
+        self.client.current = playing(20000)
+        self.assertIsNotNone(w.poll())
+        self.assertNotEqual(self.read_out()["history_id"], h1)
+
+    def test_seek_back_far_from_start_after_long_gap_keeps_history_id(self):
+        self.client.current = playing(100000)
+        w = self.watcher()
+        w.poll()
+        h1 = self.read_out()["history_id"]
+        self.clock.advance(100)  # the old play would just about end now ...
+        self.client.current = playing(60000)  # ... but 60 s in is too far for a restart
+        self.assertIsNone(w.poll())
+        self.assertEqual(self.read_out()["history_id"], h1)
+
+    def test_queue_rate_limited_on_new_track_keeps_track_change(self):
+        self.client.current = playing(30000)
+        w = self.watcher()
+        w.poll()
+        h1 = self.read_out()["history_id"]
+        queue = self.client.queue
+
+        def limited():
+            raise nps.RateLimited(10)
+        self.client.queue = limited
+        self.clock.advance(3)
+        self.client.current = playing(1000, track_item("t2", "Song B"))
+        with self.assertRaises(nps.RateLimited):
+            w.poll()
+        self.assertEqual(self.read_out()["title"], "Song A")
+        self.client.queue = queue
+        self.clock.advance(10)
+        self.client.current = playing(11000, track_item("t2", "Song B"))
+        self.assertIsNotNone(w.poll())
+        d = self.read_out()
+        self.assertEqual(d["title"], "Song B")
+        self.assertNotEqual(d["history_id"], h1)
+
+    def test_failed_write_is_retried_with_new_history_id(self):
+        self.client.current = playing(30000)
+        w = self.watcher()
+        w.poll()
+        h1 = self.read_out()["history_id"]
+        real = nps.write_atomic
+
+        def broken(path, obj):
+            raise OSError("disk full")
+        nps.write_atomic = broken
+        try:
+            self.clock.advance(3)
+            self.client.current = playing(1000, track_item("t2", "Song B"))
+            with self.assertRaises(OSError):
+                w.poll()
+        finally:
+            nps.write_atomic = real
+        self.clock.advance(3)
+        self.client.current = playing(4000, track_item("t2", "Song B"))
+        self.assertIsNotNone(w.poll())
+        d = self.read_out()
+        self.assertEqual(d["title"], "Song B")
+        self.assertNotEqual(d["history_id"], h1)
+
+    def test_204_keeps_played_at_consistent(self):
+        self.client.current = playing(30000)
+        w = self.watcher()
+        w.poll()
+        self.clock.advance(3)
+        self.client.current = playing(33000)
+        w.poll()
+        self.clock.advance(3)
+        self.client.current = None
+        w.poll()
+        d = self.read_out()
+        self.assertFalse(d["is_playing"])
+        played = nps.parse_iso(d["played_at"])
+        fetched = nps.parse_iso(d["fetched_at"])
+        self.assertEqual(fetched - played, timedelta(milliseconds=d["progress_ms"]))
+        self.assertEqual(d["progress_ms"], 33000)
+
+    def test_unexpected_json_shapes_do_not_crash(self):
+        w = self.watcher()
+        self.client.current = ["not", "a", "dict"]
+        self.assertIsNone(w.poll())
+        self.client.current = playing(30000, dict(track_item(), artists="nobody"))
+        self.client.queue = lambda: ["not", "a", "dict"]
+        self.assertIsNotNone(w.poll())
+        d = self.read_out()
+        self.assertEqual(d["artist"], "")
+        self.assertEqual(d["next"], [])
+
+    def test_restart_with_broken_next_in_file(self):
+        self.out.write_text(json.dumps({"source": "spotify", "history_id": "sp-t1-1", "content_id": "t1",
+                                        "fetched_at": "2026-11-21T12:00:00+00:00", "progress_ms": 30000,
+                                        "duration_ms": 200000, "is_playing": True, "next": ["x", 3]}))
+        self.client.current = playing(31000)
+        w = self.watcher()
+        w.poll()
+        self.assertEqual(self.read_out()["history_id"], "sp-t1-1")
+
 
 # --- run loop: 429, 5xx, login required ------------------------------------------
 
@@ -571,15 +695,23 @@ class LoginTest(TmpDir):
         t = FakeTransport([resp(200, {"access_token": SECRET_ACCESS, "refresh_token": SECRET_REFRESH,
                                       "expires_in": 3600, "token_type": "Bearer",
                                       "scope": "user-read-currently-playing user-read-playback-state"})])
-        th, result = self.start_login(t)
-        q = urllib.parse.parse_qs(urllib.parse.urlparse(result["url"]).query)
-        state = q["state"][0]
-        self.assertEqual(self.hit(result["port"], {"code": "c", "state": "wrong"}), 400)
-        self.assertEqual(self.hit(result["port"], {"code": "the-code", "state": state}), 200)
-        th.join(10)
+        err = io.StringIO()
+        with self.assertLogs("nowplaying_spotify", level="DEBUG") as cm, redirect_stderr(err):
+            th, result = self.start_login(t)
+            q = urllib.parse.parse_qs(urllib.parse.urlparse(result["url"]).query)
+            state = q["state"][0]
+            self.assertEqual(self.hit(result["port"], {"code": "c", "state": "wrong"}), 400)
+            self.assertEqual(self.hit(result["port"], {"code": "c", "state": "äあ"}), 400)
+            self.assertEqual(self.hit(result["port"], {"code": "the-code", "state": state}), 200)
+            th.join(10)
         self.assertEqual(result.get("rc"), 0, result.get("error"))
         [call] = t.calls
         form = urllib.parse.parse_qs(call["body"].decode())
+        verifier = form["code_verifier"][0]
+        said = "\n".join(cm.output) + err.getvalue()
+        for secret in ("the-code", verifier, SECRET_ACCESS, SECRET_REFRESH):
+            self.assertNotIn(secret, said)
+        self.assertNotIn(verifier, result["url"])
         self.assertEqual(form["grant_type"], ["authorization_code"])
         self.assertEqual(form["code"], ["the-code"])
         self.assertEqual(form["redirect_uri"], ["http://127.0.0.1:8888/callback"])
@@ -596,6 +728,14 @@ class LoginTest(TmpDir):
         self.assertEqual(self.hit(result["port"], {"error": "access_denied", "state": state}), 400)
         th.join(10)
         self.assertEqual(result.get("rc"), 1)
+        self.assertFalse(self.token_path.exists())
+
+    def test_exchange_without_access_token_fails_cleanly(self):
+        th, result = self.start_login(FakeTransport([resp(200, {"token_type": "Bearer"})]))
+        state = urllib.parse.parse_qs(urllib.parse.urlparse(result["url"]).query)["state"][0]
+        self.assertEqual(self.hit(result["port"], {"code": "the-code", "state": state}), 200)
+        th.join(10)
+        self.assertEqual(result.get("rc"), 1, result.get("error"))
         self.assertFalse(self.token_path.exists())
 
 
@@ -619,6 +759,37 @@ class CliTest(unittest.TestCase):
                 del os.environ["KAGELIFE_SPOTIFY_CLIENT_ID"]
             else:
                 os.environ["KAGELIFE_SPOTIFY_CLIENT_ID"] = old
+
+
+class OnceTest(TmpDir):
+    def run_once(self, client):
+        real = nps.SpotifyClient
+        nps.SpotifyClient = lambda tokens: client
+        buf = io.StringIO()
+        try:
+            with redirect_stdout(buf):
+                rc = nps.main(["--client-id", "cid", "--once", "--out", str(self.out),
+                               "--token", str(self.token_path)])
+        finally:
+            nps.SpotifyClient = real
+        return rc, buf.getvalue()
+
+    def test_once_prints_and_does_not_write(self):
+        client = FakeClient()
+        client.current = playing(30000)
+        rc, out = self.run_once(client)
+        self.assertEqual(rc, 0)
+        self.assertEqual(json.loads(out)["title"], "Song A")
+        self.assertFalse(self.out.exists())
+
+    def test_once_errors_exit_1_without_traceback(self):
+        for err in (nps.RateLimited(5), nps.ApiError(503), OSError("network down")):
+            client = FakeClient()
+            client.current = err
+            rc, out = self.run_once(client)
+            self.assertEqual(rc, 1)
+            self.assertEqual(out, "")
+            self.assertFalse(self.out.exists())
 
 
 # --- compatibility with tools/conductor/wait_next.py -------------------------------

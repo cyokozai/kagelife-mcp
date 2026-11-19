@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import base64
 import hashlib
+import http.client
 import json
 import logging
 import os
@@ -98,9 +99,11 @@ def urllib_transport(method: str, url: str, headers: dict, body: Optional[bytes]
         hdrs = {k.lower(): v for k, v in (e.headers.items() if e.headers else [])}
         try:
             data = e.read()
-        except OSError:
+        except (OSError, http.client.HTTPException):
             data = b""
         return Response(e.code, hdrs, data)
+    except http.client.HTTPException as e:  # IncompleteRead, RemoteDisconnected, BadStatusLine ...
+        raise OSError("%s: %s" % (type(e).__name__, e)) from e
 
 
 def _error_detail(r: Response) -> str:
@@ -318,12 +321,16 @@ def write_atomic(path: Path, obj: Any) -> None:
 
 
 def artist_names(item: dict) -> str:
-    return ", ".join(a.get("name", "") for a in item.get("artists") or [] if a.get("name"))
+    artists = item.get("artists")
+    if not isinstance(artists, list):
+        return ""
+    return ", ".join(str(a["name"]) for a in artists if isinstance(a, dict) and a.get("name"))
 
 
 def next_tracks(queue_obj: Any) -> list:
     out = []
-    for it in (queue_obj or {}).get("queue") or []:
+    items = queue_obj.get("queue") if isinstance(queue_obj, dict) else None
+    for it in items if isinstance(items, list) else []:
         if not isinstance(it, dict) or it.get("type") != "track" or not it.get("id"):
             continue
         out.append({"title": it.get("name", ""), "artist": artist_names(it),
@@ -355,15 +362,24 @@ def track_of(cur: Any) -> Optional[dict]:
 
 
 def is_new_play(prev: Optional[Observation], obs: Observation) -> bool:
-    """Decide whether obs starts a new play (a new history_id). See README for the rules."""
+    """Decide whether obs starts a new play (a new history_id). See README for the rules.
+
+    Same track: a new play only when the progress went backwards, the previous play would
+    have reached within END_WINDOW_MS of its end by now, and obs is no further from the start
+    than the time since that expected end (+ START_WINDOW_MS). Anything else is a seek.
+    """
     if prev is None or prev.track_id != obs.track_id:
         return True
-    if obs.progress_ms >= prev.progress_ms or obs.progress_ms > START_WINDOW_MS:
-        return False  # moving forward, or a seek that did not land near the start
+    if obs.progress_ms >= prev.progress_ms:
+        return False  # moving forward (or a forward seek)
     elapsed_ms = 0.0
     if prev.is_playing:
         elapsed_ms = max(0.0, (obs.fetched_at - prev.fetched_at).total_seconds() * 1000)
-    return prev.progress_ms + elapsed_ms >= prev.duration_ms - END_WINDOW_MS
+    expected_ms = prev.progress_ms + elapsed_ms
+    if expected_ms < prev.duration_ms - END_WINDOW_MS:
+        return False  # the previous play cannot have ended yet: a seek backwards
+    since_end_ms = max(0.0, expected_ms - prev.duration_ms)
+    return obs.progress_ms <= since_end_ms + START_WINDOW_MS
 
 
 def make_history_id(track_id: str, started_at: datetime) -> str:
@@ -398,19 +414,26 @@ class Watcher:
         fetched = parse_iso(data.get("fetched_at"))
         if not data.get("content_id") or not data.get("history_id") or fetched is None:
             return
+        try:
+            prev = Observation(str(data["content_id"]), int(data.get("progress_ms") or 0),
+                               int(data.get("duration_ms") or 0), bool(data.get("is_playing")), fetched)
+        except (TypeError, ValueError):
+            return
+        nxt = data.get("next")
         self.payload = data
-        self.next = data.get("next") or []
-        self.prev = Observation(str(data["content_id"]), int(data.get("progress_ms") or 0),
-                                int(data.get("duration_ms") or 0), bool(data.get("is_playing")), fetched)
+        self.next = [n for n in nxt if isinstance(n, dict)] if isinstance(nxt, list) else []
+        self.prev = prev
 
     @staticmethod
     def _key(p: Optional[dict]) -> Any:
         if p is None:
             return None
+        nxt = p.get("next") if isinstance(p.get("next"), list) else []
         return (p.get("history_id"), p.get("is_playing"),
-                tuple(n.get("track_id") for n in p.get("next") or []))
+                tuple(n.get("track_id") for n in nxt if isinstance(n, dict)))
 
     def _fetch_next(self) -> list:
+        """The next tracks. 429 and LoginRequired propagate: the whole poll is retried later."""
         try:
             return next_tracks(self.client.queue())
         except (ApiError, OSError, ValueError) as e:
@@ -419,23 +442,33 @@ class Watcher:
 
     def observe(self) -> Optional[dict]:
         """Read Spotify once and return the payload that would be written (does not write)."""
+        return self._observe()[0]
+
+    def _observe(self) -> tuple:
+        """Read Spotify once. Returns (payload, prev, next) without changing self.
+
+        The caller commits prev/next only after the payload was handled, so a failure halfway
+        (a 429 on the queue, a failed write) cannot leave a new track paired with the old
+        history_id on the next poll.
+        """
         cur = self.client.currently_playing()
         now = self.clock()
         item = track_of(cur)
         if item is None:
             if cur is not None:
-                log.debug("ignoring non-track playback (%s)", cur.get("currently_playing_type"))
-                return self.payload
-            # nothing playing (204): keep the last track, mark it stopped
+                kind = cur.get("currently_playing_type") if isinstance(cur, dict) else type(cur).__name__
+                log.debug("ignoring non-track playback (%s)", kind)
+                return self.payload, self.prev, self.next
+            # nothing playing (204): keep the last track and mark it stopped. progress_ms and
+            # fetched_at stay those of the last time the track was seen, so played_at still
+            # equals fetched_at - progress_ms.
             if self.payload is None:
-                return None
-            p = dict(self.payload)
-            p["is_playing"] = False
-            p["fetched_at"] = iso(now)
-            if self.prev is not None:
-                self.prev = Observation(self.prev.track_id, self.prev.progress_ms,
-                                        self.prev.duration_ms, False, now)
-            return p
+                return None, self.prev, self.next
+            p = dict(self.payload, is_playing=False)
+            prev = self.prev
+            if prev is not None:
+                prev = Observation(prev.track_id, prev.progress_ms, prev.duration_ms, False, prev.fetched_at)
+            return p, prev, self.next
         obs = Observation(item["id"], int(cur.get("progress_ms") or 0), int(item.get("duration_ms") or 0),
                           bool(cur.get("is_playing")), now)
         started = now - timedelta(milliseconds=obs.progress_ms)
@@ -443,8 +476,7 @@ class Watcher:
             history_id, detected_at = make_history_id(obs.track_id, started), iso(now)
         else:
             history_id, detected_at = self.payload["history_id"], self.payload.get("detected_at", iso(now))
-        self.prev = obs
-        self.next = self._fetch_next()
+        nxt = self._fetch_next()
         return {
             "title": item.get("name", ""),
             "artist": artist_names(item),
@@ -461,20 +493,21 @@ class Watcher:
             "progress_ms": obs.progress_ms,
             "is_playing": obs.is_playing,
             "fetched_at": iso(now),
-            "next": self.next,
-        }
+            "next": nxt,
+        }, obs, nxt
 
     def poll(self) -> Optional[dict]:
         """Observe once; write and return the payload only if it changed."""
-        p = self.observe()
-        if p is None or self._key(p) == self._key(self.payload):
-            if p is not None and self.payload is not None and p.get("history_id") == self.payload.get("history_id"):
-                # remember the newest progress in memory, but do not rewrite the file
-                self.payload = dict(self.payload, progress_ms=p["progress_ms"], fetched_at=p["fetched_at"])
-            return None
-        write_atomic(self.out_path, p)
-        self.payload = p
-        return p
+        p, prev, nxt = self._observe()
+        changed = p is not None and self._key(p) != self._key(self.payload)
+        if changed:
+            write_atomic(self.out_path, p)  # if this raises, nothing below is committed
+        # commit: from here on the new observation is the reference for the next poll.
+        # Unchanged payloads are kept in memory only (newest progress), the file is not rewritten.
+        self.prev, self.next = prev, nxt
+        if p is not None:
+            self.payload = p
+        return p if changed else None
 
 
 def run_forever(watcher: Watcher, interval: float, sleep: Callable[[float], None] = time.sleep,
@@ -498,7 +531,7 @@ def run_forever(watcher: Watcher, interval: float, sleep: Callable[[float], None
         except RateLimited as e:
             log.warning("rate limited: waiting %.0f s", e.retry_after)
             sleep(max(e.retry_after, interval))
-        except (ApiError, OSError, ValueError, KeyError) as e:
+        except (ApiError, OSError, ValueError, KeyError, TypeError) as e:
             backoff = min(backoff * 2, MAX_BACKOFF)
             log.warning("read failed (%s): retrying in %.0f s", e, backoff)
             sleep(backoff)
@@ -538,7 +571,7 @@ def login(client_id: str, token_path: Path, transport: Transport = urllib_transp
                 return
             q = urllib.parse.parse_qs(u.query)
             got_state = (q.get("state") or [""])[0]
-            if not secrets.compare_digest(got_state, state):
+            if not secrets.compare_digest(got_state.encode("utf-8"), state.encode("ascii")):
                 self._reply(400, "state mismatch: ignored")
                 return
             if "error" in q:
@@ -584,7 +617,15 @@ def login(client_id: str, token_path: Path, transport: Transport = urllib_transp
     if r.status != 200:
         log.error("code exchange failed (HTTP %d %s)", r.status, _error_detail(r))
         return 1
-    save_tokens(token_path, _tokens_from_response(r.json(), now()))
+    try:
+        obj = r.json()
+        tokens = _tokens_from_response(obj, now())
+    except (ValueError, KeyError, TypeError, AttributeError):
+        log.error("code exchange returned no access token")
+        return 1
+    if not tokens.get("refresh_token"):
+        log.warning("no refresh token was returned: `login` will be needed again in about an hour")
+    save_tokens(token_path, tokens)
     log.info("logged in; tokens saved to %s", token_path)
     return 0
 
@@ -628,7 +669,15 @@ def main(argv: Optional[list] = None) -> int:
     watcher = Watcher(client, args.out)
     try:
         if args.once:
-            print(json.dumps(watcher.observe(), ensure_ascii=False, indent=2))
+            try:
+                payload = watcher.observe()
+            except RateLimited as e:
+                log.error("%s", e)
+                return 1
+            except (ApiError, OSError, ValueError, KeyError, TypeError) as e:
+                log.error("read failed (%s)", e)
+                return 1
+            print(json.dumps(payload, ensure_ascii=False, indent=2))
             return 0
         return run_forever(watcher, args.interval)
     except LoginRequired as e:

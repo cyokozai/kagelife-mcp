@@ -1,4 +1,5 @@
-# Runtime for nowplaying-spotify. Standard library only: no pip install.
+# Spotify の再生中の曲を書き出す nowplaying-spotify の実行環境。
+# 標準ライブラリだけで動くので pip install はしない。ローカルの Python も使わない。
 FROM python:3.12-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
