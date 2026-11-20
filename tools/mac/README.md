@@ -23,6 +23,7 @@ Mac: Spotify -> nowplaying-spotify (コンテナ) -> ~/.cache/kagelife/now_playi
 | 外部ディスプレイに全画面で出す | `sh tools/mac/start.sh --shaders ~/vj/shaders -- -display 2 -fullscreen` |
 | Spotify なしで kagelife だけ起動する | `sh tools/mac/start.sh --shaders ~/vj/shaders --no-nowplaying` |
 | 指揮を始める | Claude Code に「`tools/conductor/CONDUCTOR.md` を読んで指揮を始めて」と頼む |
+| 常駐させる | 下の「常駐させる」 |
 | 今の曲を見る | `cat ~/.cache/kagelife/now_playing.json` |
 | コンテナのログを見る | `docker logs -f kagelife-nowplaying-spotify` |
 | kagelife のログを見る | `tail -f ~/.cache/kagelife/kagelife.log` |
@@ -130,6 +131,62 @@ tools/conductor/CONDUCTOR.md を読んで指揮を始めて
 
 Stream Deck（kagelife-deck）は、この手順とは別に用意します。Mac で deck を繋ぐときは、kagelife の制御口の発見ファイルが macOS では `~/Library/Caches/kagelife/control.json` にあります。
 
+## 常駐させる
+
+曲が変わるたびに自動でシェーダを書かせるには、Claude Code を常駐させます。
+
+CONDUCTOR.md は、Claude Code が常駐して回す前提で書かれています。`wait_next.sh` を背景で `--timeout 900` で待ち、曲が変わると `song` が返ります。
+Claude Code はシェーダを書いて検査し、裏の予約名に書き、端末に 1 行知らせて、また待ちます。15 分なにも無ければ終了コード 3 で抜けるので、待ち直す形です。
+人が端末で頼んだことは、自動の流れより先に従います。
+
+### 始め方
+
+1. `sh tools/mac/start.sh --shaders ~/vj/shaders` で、kagelife と曲情報の見張りを起動する
+2. kagelife-mcp を Claude Code に登録する（上の「3. kagelife-mcp を作って Claude Code に登録する」）
+3. この clone の最上位で Claude Code を開く。Claude デスクトップアプリの Code タブでも、ターミナルの `claude` でもよい。「`tools/conductor/CONDUCTOR.md` を読んで指揮を始めて」と頼む
+4. 止めるときは、セッションで「止めて」と頼むか、セッションを閉じる。そのあとで `sh tools/mac/stop.sh` を打つ
+
+### 許可の確認で止まらないようにする
+
+曲ごとに、Bash（`sh tools/conductor/wait_next.sh` など）、MCP の呼び出し、下書きのファイルへの書き込みが走ります。
+許可を毎回聞かれると、人がいないときに止まります。そこで、利用者が自分の Claude Code の設定へ許可を入れておく必要があります。エージェントには設定を書かせません。
+
+置き場所の例は、この clone の `.claude/settings.local.json`（git に入りません）です。
+
+```json
+{
+  "permissions": {
+    "allow": [
+      "Bash(sh tools/conductor/wait_next.sh:*)",
+      "Bash(sh tools/conductor/back_slot.sh:*)",
+      "Bash(sh tools/conductor/check_shader.sh:*)",
+      "Bash(sh tools/conductor/note_written.sh:*)",
+      "Bash(mkdir -p ~/.cache/kagelife/live)",
+      "Edit(~/.cache/kagelife/live/**)",
+      "mcp__kagelife"
+    ]
+  }
+}
+```
+
+書き方は、Claude Code の許可の設定の説明で確かめてから使います。この例が正しいことは確かめていません。
+デスクトップアプリの Code タブなら、許可の方式の切り替え（自動に任せる方式など）でも代えられます。
+
+### 長く回すとき
+
+1 曲ごとに会話が伸びます。長くなると、Claude Code が自動で要約して続けます。何時間も回したときの動きと、使う量は確かめていません。
+
+Mac がスリープすると止まります。展示の間は、別の端末で次を動かしておきます。
+
+```sh
+caffeinate -dims
+```
+
+### 別の形（案・未実装）
+
+待つ役をシェルのループにして、曲が変わるたびに `claude -p`（1 回だけ実行して終わる形）を呼ぶ作りも考えられます。
+毎回まっさらな文脈で始まるので長時間に強い一方、許可するツールを起動時に指定する必要があります。今は作っていません。
+
 ## 止める・片付ける
 
 ```sh
@@ -170,13 +227,16 @@ docker rmi kagelife-mac-test
 - `python:3.12-slim` のコンテナ（`sh` は dash）で、`start.sh`・`stop.sh` のテスト 17 件が通った
 - この Mac で、kagelife の `dev` を `go build` したものを `start.sh --no-nowplaying` で窓表示で起動し、kagelife-mcp の stdio で `get_state` と `write_back_slot` を流した。
   `write_back_slot` は llm_a に書けて、書く前も後も `active: 01_uv` のままだった。`stop.sh` で kagelife が止まった
+- Mac で MCP を登録した Claude Code に CONDUCTOR.md を読ませて 1 周させ、llm_a に書けた（`tools/conductor/README.md` の「確かめたこと」の記録。1 周の間、`active` は 04_warp のままだった）
 - 偽の `now_playing.json`（`history_id` が違う 2 つ）で、`tools/conductor/wait_next.sh --dir` が `start` のあと `song` を出した
 - 本物の Docker で、偽の Client ID と空の config のフォルダで `start.sh` を流すと、コンテナが「`login` first」で止まったことを `start.sh` がログ付きで伝えて終了コード 1 で終わり、`stop.sh` が kagelife を止めてコンテナを消した
 
 確かめていないこと
 
 - 本物の Spotify に繋いだ通しの動き（ログイン、曲が変わってから Claude Code が書き終えるまでの時間）
-- Claude Code に MCP を登録し、CONDUCTOR.md を読ませて Mac 1 台で 1 周させること
+- 何時間もの常駐（会話の自動要約を含む）
+- 「常駐させる」の許可の設定の例
+- Code タブでの常駐
 - `-display` と `-fullscreen` を付けた起動と、外部ディスプレイでの見え方
 - kagelife のリリース版（v0.2.0）を `start.sh` で起動すること（`dev` から作ったものだけを使った）
 - Docker Desktop と OrbStack の違いで動きが変わらないか（この Mac の既定の Docker だけを使った）
