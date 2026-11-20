@@ -1,7 +1,8 @@
 # conductor（ライブ中に Claude Code が次のシェーダを裏へ用意する段取り）
 
 曲が変わるたびに、Claude Code が映っていない予約名（llm_a / llm_b）へ次のシェーダを書くための、手順書と補助のスクリプトです。
-Claude Code は **VJ 機（Linux）** で動かし、人と Claude の両方が操作します。画面の切り替えは人が行います。
+Claude Code は **kagelife と同じ機械**で動かし、人と Claude の両方が操作します。画面の切り替えは人が行います。
+構成は 2 つあります。Mac 1 台で動かす構成の手順は `tools/mac/README.md` にあります。この README の残りは、VJ 機（Linux）＋ Mac の構成の手順です。
 
 ## 置き場所
 
@@ -9,8 +10,9 @@ Claude Code は **VJ 機（Linux）** で動かし、人と Claude の両方が�
 
 | 機械 | `<C>` | ここで動かすもの |
 |---|---|---|
-| **VJ 機（主）** | `~/kagelife-mcp/tools/conductor` | Claude Code、`wait_next.sh`・`back_slot.sh`・`note_written.sh`・`check_shader.sh` |
-| Mac | `<clone した場所>/tools/conductor` | U1（nowplaying）と `push_now_playing.sh` |
+| Mac 1 台の構成の Mac | `<clone した場所>/tools/conductor` | Claude Code、`wait_next.sh`・`back_slot.sh`・`note_written.sh`・`check_shader.sh`（`push_now_playing.sh` は使わない） |
+| 2 台の構成の VJ 機 | `~/kagelife-mcp/tools/conductor` | Claude Code、`wait_next.sh`・`back_slot.sh`・`note_written.sh`・`check_shader.sh` |
+| 2 台の構成の Mac | `<clone した場所>/tools/conductor` | U1（nowplaying）と `push_now_playing.sh` |
 
 どちらの機械でも、このリポジトリの checkout を上の場所に置き、`dev` の版に更新してあることを前提にしています。
 VJ 機にも、上の場所への clone が要ります。
@@ -19,9 +21,9 @@ VJ 機にも、上の場所への clone が要ります。
 
 | したいこと | すること |
 |---|---|
-| 今の曲を VJ 機へ送り続ける（Mac） | `sh <C>/push_now_playing.sh vj` |
-| 1 回だけ送る（Mac） | `sh <C>/push_now_playing.sh --once vj` |
-| 指揮を始める（VJ 機） | Claude Code に「`<C>/CONDUCTOR.md` を読んで指揮を始めて」と頼む |
+| 今の曲を VJ 機へ送り続ける（2 台の構成の Mac。Mac 1 台なら要らない） | `sh <C>/push_now_playing.sh vj` |
+| 1 回だけ送る（2 台の構成の Mac） | `sh <C>/push_now_playing.sh --once vj` |
+| 指揮を始める（kagelife を動かす機械） | Claude Code に「`<C>/CONDUCTOR.md` を読んで指揮を始めて」と頼む |
 | 次の曲を待つ（手で試す） | `sh <C>/wait_next.sh --timeout 60` |
 | 曲の記録を忘れて初めから | `sh <C>/wait_next.sh --reset`（`last_slot` は残る） |
 | 次の書く先を見る | `sh <C>/back_slot.sh 04_warp` |
@@ -30,6 +32,16 @@ VJ 機にも、上の場所への clone が要ります。
 | テスト | 下の「テスト」 |
 
 ## 全体の流れ
+
+Mac 1 台の構成:
+
+```
+Mac: Spotify -> nowplaying-spotify (コンテナ) -> ~/.cache/kagelife/now_playing.json
+       | wait_next.sh
+     Claude Code -> kagelife-mcp (stdio) -> kagelife の llm_a / llm_b（同じ Mac）
+```
+
+VJ 機（Linux）＋ Mac の構成:
 
 ```
 Mac:   rekordbox -> U1 nowplaying -> ~/.cache/kagelife/now_playing.json
@@ -53,7 +65,9 @@ VJ 機: ~/.cache/kagelife/now_playing.json  <- Stream Deck: ~/.cache/kagelife/cu
 
 スクリプトは `sh` と PATH の `python3`（標準ライブラリだけ）で動きます。3.9 以上で動きます（3.9.6 の `/usr/bin/python3` と Homebrew の 3.15 で確かめた。VJ 機の Ubuntu 24.04 は 3.12）。jq は使いません。
 
-## 前提
+## 前提（VJ 機＋ Mac の構成）
+
+Mac 1 台の構成の前提は `tools/mac/README.md` に書いてあります。
 
 1. **U1（nowplaying）** が Mac で常駐していて、`~/.cache/kagelife/now_playing.json` を書き換えている（`tools/nowplaying/README.md`）
 2. Mac で `push_now_playing.sh` が動いていて、Mac から `ssh vj` が鍵で通る（パスワードを聞かれない）
