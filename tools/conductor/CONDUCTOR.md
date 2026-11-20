@@ -8,12 +8,14 @@ Claude Code がこのファイルを読み、曲が変わるたびに、映っ�
 下のコマンドの `<C>` は、このファイルがあるフォルダの絶対パス。動かす機械に合わせて置き換えて打つ。
 Bash は呼ぶたびに変数を忘れるので、変数にはせず、毎回パスを書く。
 
-| 機械 | `<C>` |
+| 構成 | `<C>` |
 |---|---|
-| **VJ 機（主。Linux）** | `~/kagelife-mcp/tools/conductor` |
-| Mac（予備） | `<clone した場所>/tools/conductor` |
+| Mac 1 台（kagelife・MCP・Claude Code を同じ Mac で動かす） | `<clone した場所>/tools/conductor` |
+| VJ 機（Linux）＋ Mac | VJ 機の `~/kagelife-mcp/tools/conductor` |
 
-VJ 機では、MCP（kagelife-mcp）は同じ機械で動き、今の曲は Mac から `~/.cache/kagelife/now_playing.json` に送られてくる（Mac 側の `push_now_playing.sh`）。
+MCP（kagelife-mcp）は、kagelife と同じ機械で動く。今の曲は `~/.cache/kagelife/now_playing.json` に来る。
+Mac 1 台なら、同じ Mac の nowplaying-spotify のコンテナが直接書く（`tools/mac/README.md`）。
+VJ 機の構成では、Mac から送られてくる（Mac 側の `push_now_playing.sh`）。
 Stream Deck の合図は `~/.cache/kagelife/cue.json` に書かれる。
 
 ## 早見表
@@ -33,8 +35,10 @@ Stream Deck の合図は `~/.cache/kagelife/cue.json` に書かれる。
 
 キーと予約名: 8 = llm_a、9 = llm_b。1〜7 は basic-vj、0 は直前の予約名以外へ戻る。Shift を足すとクロスフェード。
 
-## 人と一緒に操作する（VJ 機の画面）
+## 人と一緒に操作する
 
+- Mac 1 台の構成では、端末と kagelife の窓を別々に置く。人は kagelife の窓で 8・9（Shift でクロスフェード）などのキーを押す。
+  知らせの文のキーも「Shift+9 で出せます」のように書く。下の picom・F12・Super の 3 行は VJ 機の構成だけの話
 - VJ 機の画面では、picom が「Claude Code が映った端末（tmux vj の 0 番）」を kagelife の上に重ねている
 - 人は F12 で端末を出し入れする
 - 人は Super+1〜9・0・Space・h と Super+Shift+1〜9 で kagelife を操作する。フォーカスは端末のまま
@@ -67,6 +71,7 @@ Stream Deck の合図は `~/.cache/kagelife/cue.json` に書かれる。
    - 待っている間に人から指示が来たら、そちらを先に片付ける
 2. **曲を読む。** 出力の `now_playing` の `title`・`artist`・`bpm`・`key`・`genre` を見る。
    `now_playing` が `null` のとき（合図だけ来た）は、前の曲のまま次の絵を用意する。
+   Spotify から来た曲（`source: spotify`）は `bpm`・`key`・`genre` がいつも `null`。そのときは曲名とアーティストから案を決める。
 3. **段 A の曲か確かめる。** `~/.cache/kagelife/setlist/index.json` があり、`title`（と `artist`）が合う行があれば、そのファイルを使って 6 へ進む。
 4. **裏の予約名を決める。** `get_state` を呼ぶ。
    - `fade:` が `fading to ...` なら、`fade: idle` になるまで待つ（2 秒ごと、60 秒まで）
@@ -76,7 +81,7 @@ Stream Deck の合図は `~/.cache/kagelife/cue.json` に書かれる。
    - ツールに `write_back_slot` があれば（kagelife-mcp 0.2 以降）、名前を決めずにそれを使ってよい。0.1.0 には無く、`get_state` に `llm_slots` も出ない
 5. **絵の案を決めて書く。** 案は 1 行で決める（例: 「128 BPM の Techno、Am → 青緑の同心円が拍で少し太る」）。
    - ジャンルと BPM で動きの速さを、キー（短調・長調）で色の寒暖を決める、くらいで十分。人の指示（「暗めに」など）があればそれを優先する
-   - **画面の左半分には端末が重なることがある。** 見せたい形は中央から右に置く
+   - **画面の左半分には端末が重なることがある（VJ 機の構成）。** 見せたい形は中央から右に置く
    - ファイルに書く: `~/.cache/kagelife/live/<history_id>.kage`（フォルダが無ければ `mkdir -p ~/.cache/kagelife/live`）
 6. **検査する。** `sh <C>/check_shader.sh <file>`。`NG` なら直す。`WARN loop_heavy` はループを減らす。
 7. **書く。** MCP の `write_shader` に `name`（4 で決めた予約名）と `source`（ファイルの中身）を渡す。
@@ -113,7 +118,7 @@ Stream Deck の合図は `~/.cache/kagelife/cue.json` に書かれる。
 5. できれば本番の前に、1 本ずつ裏の予約名へ書いてコンパイルを通し、人にキーで見てもらう（切り替えは人）
 6. 本番では「1 周」の 3 で見つかったファイルを、検査してから書くだけにする
 
-段 A を Mac で作ったときは、`setlist/` を VJ 機の `~/.cache/kagelife/setlist/` に写しておく。
+VJ 機の構成で段 A を Mac で作ったときは、`setlist/` を VJ 機の `~/.cache/kagelife/setlist/` に写しておく（Mac 1 台なら写さなくてよい）。
 
 ## まだ無いもの
 
