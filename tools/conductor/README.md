@@ -2,6 +2,7 @@
 
 曲が変わるたびに、Claude Code が映っていない予約名（llm_a / llm_b）へ次のシェーダを書くための、手順書と補助のスクリプトです。
 Claude Code は **kagelife と同じ機械**で動かし、人と Claude の両方が操作します。画面の切り替えは人が行います。
+ただし AI の構成（展示。kagelife と kagelife-mcp だけで、画面の前に人がいない）では、書けたら Claude が約 8 拍で切り替えます（下の「構成ごとの決まり」）。
 構成は 2 つあります。Mac 1 台で動かす構成の手順は `tools/mac/README.md` にあります。この README の残りは、VJ 機（Linux）＋ Mac の構成の手順です。
 
 ## 置き場所
@@ -28,6 +29,9 @@ VJ 機にも、上の場所への clone が要ります。
 | 曲の記録を忘れて初めから | `sh <C>/wait_next.sh --reset`（`last_slot` は残る） |
 | 次の書く先を見る | `sh <C>/back_slot.sh 04_warp` |
 | 書いた予約名を記録する | `sh <C>/note_written.sh llm_a` |
+| 書いた曲も記録する（流れを残す材料） | `sh <C>/note_written.sh llm_a --history-id h1 --title '曲名' --artist '名前' --idea '青緑の同心円'` |
+| どの構成で動くかを見る | `sh <C>/mode.sh`（`human` / `ai` / `full`） |
+| 良かった流れを kagelife-shaders に残す | `tools/setlist/README.md` |
 | シェーダを検査する | `sh <C>/check_shader.sh file.kage`（`--json` で JSON） |
 | テスト | 下の「テスト」 |
 
@@ -58,7 +62,8 @@ VJ 機: ~/.cache/kagelife/now_playing.json  <- Stream Deck: ~/.cache/kagelife/cu
 | `CONDUCTOR.md` | Claude Code が従う手順書。1 周の流れ、人と一緒に操作する決まり、エラーごとの扱い、してはいけないこと、段 A |
 | `push_now_playing.sh` / `.py` | （Mac）`now_playing.json` が変わったら、ssh で VJ 機の同じ場所へ一時ファイル → mv で書く |
 | `wait_next.sh` / `.py` | `now_playing.json` の `history_id` か `cue.json` の更新時刻が変わるまで待ち、1 行の JSON を出して終わる。起動のたびに下書きの置き場所 `live/` を作る |
-| `back_slot.sh` / `note_written.sh` / `slots.py` | 書く先を決める（`back_slot.sh <active>`）。書けた予約名を `conductor_state.json` の `last_slot` に記録する（`note_written.sh <name>`） |
+| `back_slot.sh` / `note_written.sh` / `slots.py` | 書く先を決める（`back_slot.sh <active>`）。書けた予約名を `conductor_state.json` の `last_slot` に記録する（`note_written.sh <name>`）。曲を渡すと `setlist_log.jsonl` にも 1 行足す |
+| `mode.sh` | `kagelife_mode` を読み、構成（`human` / `ai` / `full`）を 1 行で出す。無い・読めないときは `full` |
 | `check_shader.sh` / `.py` | 書く前の静的な検査（1 行目・ASCII・64KiB・uniform・ループの回数の目安・`Fragment` の有無） |
 | `tests/` | 上のスクリプトのテスト（標準ライブラリの unittest） |
 | `Dockerfile` | テストを回すための image（`python:3.12-slim`、pip では何も入れない） |
@@ -96,6 +101,35 @@ Mac 1 台の構成の前提は `tools/mac/README.md` に書いてあります。
 `back_slot.sh <active>` は、`active` が llm_a なら llm_b、llm_b なら llm_a を出します。それ以外（1〜7 などが映っている）なら、
 `conductor_state.json` の `last_slot` でない方を出します。記録が無ければ llm_a です。
 `last_slot` はファイルに残るので、Claude Code のセッションを立て直しても引き継がれます。`wait_next.sh --reset` でも消えません。
+
+## 構成ごとの決まり
+
+`tools/mac/start.sh` は、起動した構成を `~/.cache/kagelife/kagelife_mode` に 1 語で書きます（`human` / `ai` / `full`）。
+`mode.sh` はそれを読み、ファイルが無い・読めない・知らない語のときは `full` を出します。start.sh がまだ書かない版でも、フル構成として動きます。
+
+| 構成 | 画面を切り替えるのは |
+|---|---|
+| `full`（kagelife・deck・kagelife-mcp。ライブ） | 人。Claude は裏の予約名に書くだけ（今までどおり） |
+| `human`（kagelife と deck） | 人。普通は Claude を動かさない |
+| `ai`（kagelife と kagelife-mcp。展示） | Claude。書けたら、その予約名へ約 8 拍で `crossfade` する。人がキーや deck で切り替えていたら、その曲では切り替えない |
+
+人の操作の見分け方: Claude は最後に切り替えた先（出した名前）を覚えておき、切り替える前に `get_state` の `active` と比べます。
+違っていれば人が切り替えたとみなし、その曲では切り替えず、出した名前を今の `active` に置き換えます。次の曲からはまた切り替えます。
+人が会話で構成を言ったら、`mode.sh` の出力よりそちらを優先します。細かい手順は `CONDUCTOR.md` の「AI の構成」にあります。
+
+## 書いた曲の記録（setlist_log.jsonl）
+
+`note_written.sh <予約名> --history-id H --title T --artist A [--idea I]` は、`last_slot` を記録した後、
+`~/.cache/kagelife/setlist_log.jsonl` に 1 行の JSON を足します。
+
+```json
+{"at": "2026-11-21T12:00:03.120000+00:00", "slot": "llm_a", "history_id": "h1", "title": "曲名", "artist": "名前", "idea": "青緑の同心円"}
+```
+
+- note_written は書き込みが成功した後にだけ呼ぶので、行があること自体が「書けた」ことを表します
+- `conductor_state.json` と同じ鍵（`conductor_state.json.lock`）の下で書きます
+- `--history-id` を渡さないときは、今までどおり `last_slot` だけを記録します。`--title` などだけを渡すと使い方の誤り（終了コード 2）です
+- 曲ごとの下書きは `live/<history_id>.kage` にあります。この 2 つから `tools/setlist/save_setlist.sh` が流れを kagelife-shaders に写します
 
 ## wait_next の出力
 
@@ -152,6 +186,7 @@ docker rmi kagelife-conductor-test
 - VJ 機で Claude Code を動かし、MCP を ssh なしで登録して 1 周させること（VJ 機の checkout がまだ無い）
 - `push_now_playing.sh` の常駐（見張り続ける形）を実機で動かすこと。U1 と組み合わせて、曲が実際に変わったときに届くまでの時間
 - `back_slot.sh`・`note_written.sh` を Mac の python3 3.9 で動かすこと（コンテナのテストと、3.9 の構文として読めることだけを見ている）
+- AI の構成の切り替え（`mode.sh` が `ai` のときに、書けたら 8 拍で切り替え、人の切り替えを見て止まること）を、Claude Code に CONDUCTOR.md を読ませて通しで回すこと（2026-11-21 時点で未）
 - 端末を重ねた画面で、Claude の 1 行の知らせが客席からどう見えるか
 - 409・422 の扱いを実機で起こすこと
 - ループの回数の目安が fps とどれだけ合うか（04_warp の 1 例しか無い）
