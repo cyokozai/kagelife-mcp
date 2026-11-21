@@ -144,7 +144,7 @@ func (l *Logger) logf(level, format string, args ...any) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	t := l.now()
-	fmt.Fprintf(l.w, "%s,%03d %s %s\n", t.Format("2006-01-02 15:04:05"), t.Nanosecond()/1e6, level,
+	_, _ = fmt.Fprintf(l.w, "%s,%03d %s %s\n", t.Format("2006-01-02 15:04:05"), t.Nanosecond()/1e6, level,
 		fmt.Sprintf(format, args...))
 }
 

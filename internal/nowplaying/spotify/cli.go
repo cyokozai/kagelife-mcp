@@ -80,10 +80,10 @@ func parseArgs(args []string, getenv func(string) string, home string, stdout, s
 	for {
 		if err := fs.Parse(rest); err != nil {
 			if errors.Is(err, flag.ErrHelp) {
-				fmt.Fprint(stdout, usage)
+				_, _ = fmt.Fprint(stdout, usage)
 				return o, 0
 			}
-			fmt.Fprint(stderr, usage)
+			_, _ = fmt.Fprint(stderr, usage)
 			return o, 2
 		}
 		r := fs.Args()
@@ -91,8 +91,8 @@ func parseArgs(args []string, getenv func(string) string, home string, stdout, s
 			break
 		}
 		if o.command != "" {
-			fmt.Fprint(stderr, usage)
-			fmt.Fprintf(stderr, "error: unrecognized arguments: %s\n", strings.Join(r, " "))
+			_, _ = fmt.Fprint(stderr, usage)
+			_, _ = fmt.Fprintf(stderr, "error: unrecognized arguments: %s\n", strings.Join(r, " "))
 			return o, 2
 		}
 		o.command, rest = r[0], r[1:]
@@ -102,8 +102,8 @@ func parseArgs(args []string, getenv func(string) string, home string, stdout, s
 		o.command = "watch"
 	case "watch", "login":
 	default:
-		fmt.Fprint(stderr, usage)
-		fmt.Fprintf(stderr, "error: argument command: invalid choice: %q (choose from 'watch', 'login')\n", o.command)
+		_, _ = fmt.Fprint(stderr, usage)
+		_, _ = fmt.Fprintf(stderr, "error: argument command: invalid choice: %q (choose from 'watch', 'login')\n", o.command)
 		return o, 2
 	}
 	return o, -1
@@ -193,9 +193,9 @@ func runCLI(ctx context.Context, args []string, getenv func(string) string, stdo
 		return 1
 	}
 	if p == nil {
-		fmt.Fprintln(stdout, "null")
+		_, _ = fmt.Fprintln(stdout, "null")
 	} else {
-		fmt.Fprintln(stdout, string(Encode(p, false)))
+		_, _ = fmt.Fprintln(stdout, string(Encode(p, false)))
 	}
 	return 0
 }

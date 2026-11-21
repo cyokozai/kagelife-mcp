@@ -125,8 +125,8 @@ func Login(ctx context.Context, o LoginOptions) int {
 	if o.OnURL != nil {
 		o.OnURL(authURL, port)
 	} else {
-		fmt.Fprintf(o.Stdout, "Open this URL in a browser and allow access:\n\n%s\n\n", authURL)
-		fmt.Fprintf(o.Stdout, "Waiting for %s (listening on %s:%d) ...\n", o.RedirectURI, o.ListenHost, port)
+		_, _ = fmt.Fprintf(o.Stdout, "Open this URL in a browser and allow access:\n\n%s\n\n", authURL)
+		_, _ = fmt.Fprintf(o.Stdout, "Waiting for %s (listening on %s:%d) ...\n", o.RedirectURI, o.ListenHost, port)
 	}
 
 	timer := time.NewTimer(o.Timeout)
