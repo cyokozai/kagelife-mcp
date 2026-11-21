@@ -5,6 +5,7 @@ MCP server that lets LLMs live-code Kage shaders on [kagelife](https://github.co
 `kagelife-mcp` は、Kage シェーダの VJ ツール kagelife を、LLM（Claude Code / Claude Desktop など）から操作するための stdio MCP サーバです。
 MCP クライアントから stdio で起動され、ツール呼び出しを、常駐している kagelife GUI の制御口（127.0.0.1 の HTTP/JSON）へ中継します。
 純 Go で書かれていて、cgo や GPU ライブラリは要りません。
+同じ実行ファイルの `kagelife-mcp nowplaying-spotify` で、Spotify で再生中の曲を `now_playing.json` に書き出す見張りも動きます（[tools/nowplaying-spotify/README.md](tools/nowplaying-spotify/README.md) の「Go 版」）。
 
 ## 前提
 
