@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """slots: 最後に書いた予約名を conductor_state.json の last_slot に残し、次の書く先を決める。
 
-  slots.py note <name>    書けた予約名を記録する（note_written.sh）
+  slots.py note <name> [--history-id H --title T --artist A [--idea I]]
+                          書けた予約名を記録する（note_written.sh）。曲を渡したら setlist_log.jsonl に 1 行足す
   slots.py back <active>  get_state の active から書く先を 1 行で出す（back_slot.sh）
 
 決め方: active が予約名の一方なら、もう一方。それ以外なら last_slot でない方。記録が無ければ最初の予約名。
@@ -15,8 +16,10 @@ import json
 import os
 import sys
 from contextlib import contextmanager
+from datetime import datetime, timezone
 
 STATE_NAME = "conductor_state.json"
+LOG_NAME = "setlist_log.jsonl"
 DEFAULT_SLOTS = "llm_a,llm_b"
 
 
@@ -51,6 +54,12 @@ def state_lock(path):
             fcntl.flock(f.fileno(), fcntl.LOCK_UN)
 
 
+def append_log(path, row):
+    """setlist_log.jsonl に 1 行足す。呼ぶ側が state_lock を持っていること。"""
+    with open(path, "a", encoding="utf-8") as f:
+        f.write(json.dumps(row, ensure_ascii=False) + "\n")
+
+
 def back_slot(active, slots, last):
     if active in slots:
         others = [s for s in slots if s != active]
@@ -68,7 +77,18 @@ def main(argv=None):
     ap.add_argument("name", help="note: the slot just written / back: active from get_state")
     ap.add_argument("--dir", default=default_dir, help="folder of conductor_state.json (default: %(default)s)")
     ap.add_argument("--slots", default=DEFAULT_SLOTS, help="reserved names, comma separated (default: %(default)s)")
+    song = ap.add_argument_group("note: the song just written (appends a line to %s)" % LOG_NAME)
+    song.add_argument("--history-id", help="now_playing.history_id from wait_next")
+    song.add_argument("--title", default="")
+    song.add_argument("--artist", default="")
+    song.add_argument("--idea", default="", help="one line idea of the shader")
     args = ap.parse_args(argv)
+
+    has_song = args.history_id is not None or args.title or args.artist or args.idea
+    if has_song and args.cmd != "note":
+        ap.error("--history-id/--title/--artist/--idea are for note only")
+    if has_song and not args.history_id:
+        ap.error("--title/--artist/--idea need --history-id")
 
     slots = [s.strip() for s in args.slots.split(",") if s.strip()]
     if len(slots) != 2:
@@ -84,6 +104,15 @@ def main(argv=None):
             state = read_state(path)
             state["last_slot"] = args.name
             write_state(path, state)
+            if has_song:
+                append_log(os.path.join(args.dir, LOG_NAME), {
+                    "at": datetime.now(timezone.utc).isoformat(),
+                    "slot": args.name,
+                    "history_id": args.history_id,
+                    "title": args.title,
+                    "artist": args.artist,
+                    "idea": args.idea,
+                })
         print(args.name)
         return 0
 
