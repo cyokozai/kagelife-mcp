@@ -1,0 +1,52 @@
+[
+  {
+    "note": "song A starts",
+    "written": true,
+    "file": "{\n  \"title\": \"Song A\",\n  \"artist\": \"Artist A, Artist Ä\",\n  \"bpm\": null,\n  \"key\": null,\n  \"genre\": null,\n  \"played_at\": \"2026-11-21T11:59:30.123+00:00\",\n  \"detected_at\": \"2026-11-21T12:00:00.123+00:00\",\n  \"source\": \"spotify\",\n  \"history_id\": \"sp-4uLU6hMCjMI75M1A2tKUQC-1795262370123\",\n  \"content_id\": \"4uLU6hMCjMI75M1A2tKUQC\",\n  \"album\": \"Album A\",\n  \"duration_ms\": 200000,\n  \"progress_ms\": 30000,\n  \"is_playing\": true,\n  \"fetched_at\": \"2026-11-21T12:00:00.123+00:00\",\n  \"next\": [\n    {\n      \"title\": \"Next 1\",\n      \"artist\": \"N\",\n      \"duration_ms\": 180000,\n      \"track_id\": \"q1\"\n    },\n    {\n      \"title\": \"Next \\\"2\\\" / <&>\",\n      \"artist\": \"\",\n      \"duration_ms\": null,\n      \"track_id\": \"q2\"\n    }\n  ]\n}\n"
+  },
+  {
+    "note": "progress only",
+    "written": false,
+    "file": "{\n  \"title\": \"Song A\",\n  \"artist\": \"Artist A, Artist Ä\",\n  \"bpm\": null,\n  \"key\": null,\n  \"genre\": null,\n  \"played_at\": \"2026-11-21T11:59:30.123+00:00\",\n  \"detected_at\": \"2026-11-21T12:00:00.123+00:00\",\n  \"source\": \"spotify\",\n  \"history_id\": \"sp-4uLU6hMCjMI75M1A2tKUQC-1795262370123\",\n  \"content_id\": \"4uLU6hMCjMI75M1A2tKUQC\",\n  \"album\": \"Album A\",\n  \"duration_ms\": 200000,\n  \"progress_ms\": 30000,\n  \"is_playing\": true,\n  \"fetched_at\": \"2026-11-21T12:00:00.123+00:00\",\n  \"next\": [\n    {\n      \"title\": \"Next 1\",\n      \"artist\": \"N\",\n      \"duration_ms\": 180000,\n      \"track_id\": \"q1\"\n    },\n    {\n      \"title\": \"Next \\\"2\\\" / <&>\",\n      \"artist\": \"\",\n      \"duration_ms\": null,\n      \"track_id\": \"q2\"\n    }\n  ]\n}\n"
+  },
+  {
+    "note": "song B: the track changes",
+    "written": true,
+    "file": "{\n  \"title\": \"Next 1\",\n  \"artist\": \"N\",\n  \"bpm\": null,\n  \"key\": null,\n  \"genre\": null,\n  \"played_at\": \"2026-11-21T12:00:05.089+00:00\",\n  \"detected_at\": \"2026-11-21T12:00:06.323+00:00\",\n  \"source\": \"spotify\",\n  \"history_id\": \"sp-q1-1795262405089\",\n  \"content_id\": \"q1\",\n  \"album\": \"日本語のアルバム\",\n  \"duration_ms\": 180000,\n  \"progress_ms\": 1234,\n  \"is_playing\": true,\n  \"fetched_at\": \"2026-11-21T12:00:06.323+00:00\",\n  \"next\": [\n    {\n      \"title\": \"Next \\\"2\\\" / <&>\",\n      \"artist\": \"\",\n      \"duration_ms\": null,\n      \"track_id\": \"q2\"\n    }\n  ]\n}\n"
+  },
+  {
+    "note": "pause",
+    "written": true,
+    "file": "{\n  \"title\": \"Next 1\",\n  \"artist\": \"N\",\n  \"bpm\": null,\n  \"key\": null,\n  \"genre\": null,\n  \"played_at\": \"2026-11-21T12:00:05.023+00:00\",\n  \"detected_at\": \"2026-11-21T12:00:06.323+00:00\",\n  \"source\": \"spotify\",\n  \"history_id\": \"sp-q1-1795262405089\",\n  \"content_id\": \"q1\",\n  \"album\": \"日本語のアルバム\",\n  \"duration_ms\": 180000,\n  \"progress_ms\": 4300,\n  \"is_playing\": false,\n  \"fetched_at\": \"2026-11-21T12:00:09.323+00:00\",\n  \"next\": [\n    {\n      \"title\": \"Next \\\"2\\\" / <&>\",\n      \"artist\": \"\",\n      \"duration_ms\": null,\n      \"track_id\": \"q2\"\n    }\n  ]\n}\n"
+  },
+  {
+    "note": "an ad while paused is skipped",
+    "written": false,
+    "file": "{\n  \"title\": \"Next 1\",\n  \"artist\": \"N\",\n  \"bpm\": null,\n  \"key\": null,\n  \"genre\": null,\n  \"played_at\": \"2026-11-21T12:00:05.023+00:00\",\n  \"detected_at\": \"2026-11-21T12:00:06.323+00:00\",\n  \"source\": \"spotify\",\n  \"history_id\": \"sp-q1-1795262405089\",\n  \"content_id\": \"q1\",\n  \"album\": \"日本語のアルバム\",\n  \"duration_ms\": 180000,\n  \"progress_ms\": 4300,\n  \"is_playing\": false,\n  \"fetched_at\": \"2026-11-21T12:00:09.323+00:00\",\n  \"next\": [\n    {\n      \"title\": \"Next \\\"2\\\" / <&>\",\n      \"artist\": \"\",\n      \"duration_ms\": null,\n      \"track_id\": \"q2\"\n    }\n  ]\n}\n"
+  },
+  {
+    "note": "resume",
+    "written": true,
+    "file": "{\n  \"title\": \"Next 1\",\n  \"artist\": \"N\",\n  \"bpm\": null,\n  \"key\": null,\n  \"genre\": null,\n  \"played_at\": \"2026-11-21T12:01:07.923+00:00\",\n  \"detected_at\": \"2026-11-21T12:00:06.323+00:00\",\n  \"source\": \"spotify\",\n  \"history_id\": \"sp-q1-1795262405089\",\n  \"content_id\": \"q1\",\n  \"album\": \"日本語のアルバム\",\n  \"duration_ms\": 180000,\n  \"progress_ms\": 4400,\n  \"is_playing\": true,\n  \"fetched_at\": \"2026-11-21T12:01:12.323+00:00\",\n  \"next\": [\n    {\n      \"title\": \"Next \\\"2\\\" / <&>\",\n      \"artist\": \"\",\n      \"duration_ms\": null,\n      \"track_id\": \"q2\"\n    }\n  ]\n}\n"
+  },
+  {
+    "note": "seek near the end",
+    "written": false,
+    "file": "{\n  \"title\": \"Next 1\",\n  \"artist\": \"N\",\n  \"bpm\": null,\n  \"key\": null,\n  \"genre\": null,\n  \"played_at\": \"2026-11-21T12:01:07.923+00:00\",\n  \"detected_at\": \"2026-11-21T12:00:06.323+00:00\",\n  \"source\": \"spotify\",\n  \"history_id\": \"sp-q1-1795262405089\",\n  \"content_id\": \"q1\",\n  \"album\": \"日本語のアルバム\",\n  \"duration_ms\": 180000,\n  \"progress_ms\": 4400,\n  \"is_playing\": true,\n  \"fetched_at\": \"2026-11-21T12:01:12.323+00:00\",\n  \"next\": [\n    {\n      \"title\": \"Next \\\"2\\\" / <&>\",\n      \"artist\": \"\",\n      \"duration_ms\": null,\n      \"track_id\": \"q2\"\n    }\n  ]\n}\n"
+  },
+  {
+    "note": "repeat: back to the start after the end",
+    "written": true,
+    "file": "{\n  \"title\": \"Next 1\",\n  \"artist\": \"N\",\n  \"bpm\": null,\n  \"key\": null,\n  \"genre\": null,\n  \"played_at\": \"2026-11-21T12:01:19.322+00:00\",\n  \"detected_at\": \"2026-11-21T12:01:21.823+00:00\",\n  \"source\": \"spotify\",\n  \"history_id\": \"sp-q1-1795262479322\",\n  \"content_id\": \"q1\",\n  \"album\": \"日本語のアルバム\",\n  \"duration_ms\": 180000,\n  \"progress_ms\": 2501,\n  \"is_playing\": true,\n  \"fetched_at\": \"2026-11-21T12:01:21.823+00:00\",\n  \"next\": [\n    {\n      \"title\": \"Next \\\"2\\\" / <&>\",\n      \"artist\": \"\",\n      \"duration_ms\": null,\n      \"track_id\": \"q2\"\n    }\n  ]\n}\n"
+  },
+  {
+    "note": "seek back inside the same play: not a new play",
+    "written": false,
+    "file": "{\n  \"title\": \"Next 1\",\n  \"artist\": \"N\",\n  \"bpm\": null,\n  \"key\": null,\n  \"genre\": null,\n  \"played_at\": \"2026-11-21T12:01:19.322+00:00\",\n  \"detected_at\": \"2026-11-21T12:01:21.823+00:00\",\n  \"source\": \"spotify\",\n  \"history_id\": \"sp-q1-1795262479322\",\n  \"content_id\": \"q1\",\n  \"album\": \"日本語のアルバム\",\n  \"duration_ms\": 180000,\n  \"progress_ms\": 2501,\n  \"is_playing\": true,\n  \"fetched_at\": \"2026-11-21T12:01:21.823+00:00\",\n  \"next\": [\n    {\n      \"title\": \"Next \\\"2\\\" / <&>\",\n      \"artist\": \"\",\n      \"duration_ms\": null,\n      \"track_id\": \"q2\"\n    }\n  ]\n}\n"
+  },
+  {
+    "note": "nothing playing (204)",
+    "written": true,
+    "file": "{\n  \"title\": \"Next 1\",\n  \"artist\": \"N\",\n  \"bpm\": null,\n  \"key\": null,\n  \"genre\": null,\n  \"played_at\": \"2026-11-21T12:01:50.823+00:00\",\n  \"detected_at\": \"2026-11-21T12:01:21.823+00:00\",\n  \"source\": \"spotify\",\n  \"history_id\": \"sp-q1-1795262479322\",\n  \"content_id\": \"q1\",\n  \"album\": \"日本語のアルバム\",\n  \"duration_ms\": 180000,\n  \"progress_ms\": 1000,\n  \"is_playing\": false,\n  \"fetched_at\": \"2026-11-21T12:01:51.823+00:00\",\n  \"next\": [\n    {\n      \"title\": \"Next \\\"2\\\" / <&>\",\n      \"artist\": \"\",\n      \"duration_ms\": null,\n      \"track_id\": \"q2\"\n    }\n  ]\n}\n"
+  }
+]
