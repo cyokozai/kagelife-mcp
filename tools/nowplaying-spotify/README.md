@@ -25,6 +25,43 @@ export KAGELIFE_SPOTIFY_CLIENT_ID='控えた Client ID'
 - `-e KAGELIFE_SPOTIFY_CLIENT_ID` は、手元の環境変数の値をそのままコンテナへ渡す書き方です。`--client-id '控えた Client ID'` を付けても同じです
 - テストでは `tools/conductor` を `/conductor` にマウントします。マウントしないと、`wait_next.py` で読めるかを確かめるテストが飛ばされます（`skipped` と出ます）
 
+## Go 版（Docker なしで Mac で動かす）
+
+kagelife-mcp の実行ファイルには、この道具を Go で書き直したものが、サブコマンド `nowplaying-spotify` として入っています。
+フラグの名前と既定値、終了コード、トークンのファイルの形、`now_playing.json` のキーと値の作り方は Python 版と同じです。
+Python 版で login したトークンのファイルは、そのまま読めます。Python 版と Docker の手順は、予備としてこのまま残します。
+
+### ビルド
+
+リポジトリのいちばん上のフォルダで次を実行すると、Apple Silicon の Mac 向けの `kagelife-mcp` ができます。ビルドもコンテナの中で行います。
+
+```sh
+docker run --rm -v "$PWD":/src -w /src -e CGO_ENABLED=0 -e GOOS=darwin -e GOARCH=arm64 golang:1.27.3 go build -o kagelife-mcp .
+```
+
+### 使い方
+
+Client ID は Python 版と同じく環境変数 `KAGELIFE_SPOTIFY_CLIENT_ID` から読みます。
+
+| したいこと | コマンド |
+|---|---|
+| ログインする（最初の 1 回） | `./kagelife-mcp nowplaying-spotify login --token "$HOME/.config/kagelife/spotify-token.json"` |
+| 1 回だけ読む（書き出さない） | `./kagelife-mcp nowplaying-spotify --once` |
+| 見張り続ける | `./kagelife-mcp nowplaying-spotify --interval 3` |
+| テスト | `docker run --rm -v "$PWD":/src -w /src golang:1.27.3 go test -race ./internal/nowplaying/...` |
+
+- `--token` と `--out` の既定は Python 版と同じ `~/.config/kagelife/spotify-token.json` と `~/.cache/kagelife/now_playing.json` です
+- login の待ち受けの既定は Python 版と同じ `0.0.0.0:8888` です。コンテナを通さないので、同じネットワークのほかのマシンからも届きます。届かないようにするには `--listen-host 127.0.0.1` を付けます
+- 見張りは前面で動き続けます。Ctrl-C（SIGINT）か SIGTERM で止まり、終了コードは 0 です
+- 読み取りの誤りの扱い、書き出す JSON、history_id の決まりは、下の各節に書いたとおりです
+
+### Python 版と違うところ
+
+- `--tok` のようにフラグの名前を略しては書けません（Python 版の argparse は受け付けます）
+- login を待っている間に Ctrl-C を押すと、traceback を出さずに終了コード 1 で終わります
+- 見張りの途中で想定外の形の応答（album が文字列など）が来ても止まらず、間をあけて読み直します
+- トラック ID が文字列でない応答は曲として扱いません
+
 ## Spotify のアプリ登録
 
 1. https://developer.spotify.com/dashboard に自分の Spotify アカウントでログインし、**Create app** を押す

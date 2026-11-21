@@ -1,13 +1,21 @@
 # mac（Mac 1 台で、Spotify の曲に合わせて自動で VJ する）
 
 Mac 1 台で、Spotify で今かかっている曲に合わせて、Claude Code が曲ごとに kagelife のシェーダを書く構成の手順です。
-kagelife・kagelife-mcp・Claude Code は Mac で直接動かし、nowplaying-spotify だけを Docker のコンテナで動かします。
-`start.sh` と `stop.sh` は kagelife と nowplaying-spotify のコンテナをまとめて起動・停止します。どちらも何もインストールしません。
+kagelife・kagelife-mcp・Claude Code は Mac で直接動かします。nowplaying-spotify は kagelife-mcp の実行ファイルのサブコマンドとして背景で動かします（予備として Docker のコンテナでも動かせます）。
+`start.sh` と `stop.sh` は kagelife と nowplaying-spotify をまとめて起動・停止します。どちらも Docker のエンジンを起こさず、何もインストールしません。
+
+構成は 3 つあります。`--mode` で選びます。
+
+| 構成 | 中身 | `--mode` |
+|---|---|---|
+| 人 | kagelife（+ kagelife-deck）。1〜9 を全部、通常のシェーダに当てる | `human` |
+| AI | kagelife + kagelife-mcp。Claude Code が MCP で操作する | `ai` |
+| フル | 3 つすべて | `full` |
 
 合わせるのは曲の変わり目までです。Spotify の API は BPM を返さず、kagelife の音声入力もまだ無いので、拍には合わせません。
 
 ```
-Mac: Spotify -> nowplaying-spotify (コンテナ) -> ~/.cache/kagelife/now_playing.json
+Mac: Spotify -> nowplaying-spotify (kagelife-mcp のサブコマンド) -> ~/.cache/kagelife/now_playing.json
        | tools/conductor/wait_next.sh
      Claude Code -> kagelife-mcp (stdio) -> kagelife の llm_a / llm_b
 ```
@@ -19,13 +27,16 @@ Mac: Spotify -> nowplaying-spotify (コンテナ) -> ~/.cache/kagelife/now_playi
 | したいこと | すること |
 |---|---|
 | 準備（最初の 1 回） | 下の「準備」の 1〜5 |
-| 起動する | `sh tools/mac/start.sh --shaders ~/vj/shaders` |
+| 起動する（従来どおり） | `sh tools/mac/start.sh --shaders ~/vj/shaders` |
+| 人の構成で起動する | `sh tools/mac/start.sh --shaders ~/vj/shaders --mode human` |
+| AI の構成で起動する | `sh tools/mac/start.sh --shaders ~/vj/shaders --mode ai` |
+| フル構成で起動する | `sh tools/mac/start.sh --shaders ~/vj/shaders --mode full` |
 | 外部ディスプレイに全画面で出す | `sh tools/mac/start.sh --shaders ~/vj/shaders -- -display 2 -fullscreen` |
 | Spotify なしで kagelife だけ起動する | `sh tools/mac/start.sh --shaders ~/vj/shaders --no-nowplaying` |
 | 指揮を始める | Claude Code に「`tools/conductor/CONDUCTOR.md` を読んで指揮を始めて」と頼む |
 | 常駐させる | 下の「常駐させる」 |
 | 今の曲を見る | `cat ~/.cache/kagelife/now_playing.json` |
-| コンテナのログを見る | `docker logs -f kagelife-nowplaying-spotify` |
+| nowplaying のログを見る | `tail -f ~/.cache/kagelife/nowplaying.log`（Docker の道なら `docker logs -f kagelife-nowplaying-spotify`） |
 | kagelife のログを見る | `tail -f ~/.cache/kagelife/kagelife.log` |
 | 止める | `sh tools/mac/stop.sh` |
 | テスト | 下の「テスト」 |
@@ -69,14 +80,22 @@ claude mcp add --transport stdio kagelife -- "$HOME/.local/bin/kagelife-mcp"
 - kagelife-mcp は kagelife の制御口の発見ファイル（macOS では `~/Library/Caches/kagelife/control.json`）を読んで、同じ Mac の kagelife に繋ぎます
 - `KAGELIFE_CONTROL_FILE` で発見ファイルの場所を変えたときは、kagelife と kagelife-mcp の両方に同じ値を渡します
 
-### 4. nowplaying-spotify の image を作り、ログインする
+### 4. nowplaying-spotify にログインする
+
+```sh
+export KAGELIFE_SPOTIFY_CLIENT_ID='控えた Client ID'
+kagelife-mcp nowplaying-spotify login --token ~/.config/kagelife/spotify-token.json
+```
+
+`kagelife-mcp` が PATH に無いときは `KAGELIFE_MCP_BIN` に実行ファイルの場所を入れます。
+`start.sh` は nowplaying を起動するとき、`spotify-token.json` が無ければ kagelife を起動する前に「先に login」と案内して止まります。
+
+Docker の予備の道（`KAGELIFE_NOWPLAYING_RUNNER=docker`）を使うときだけ、image を作り、
+[`tools/nowplaying-spotify/README.md`](../nowplaying-spotify/README.md) の「ログイン」を行います。
 
 ```sh
 docker build -t kagelife-nowplaying-spotify tools/nowplaying-spotify
-export KAGELIFE_SPOTIFY_CLIENT_ID='控えた Client ID'
 ```
-
-続けて [`tools/nowplaying-spotify/README.md`](../nowplaying-spotify/README.md) の「ログイン」を 1 回行います。トークンは `~/.config/kagelife/` に保存されます。
 
 ### 5. 表示する画面を確かめる
 
@@ -93,9 +112,11 @@ export KAGELIFE_SPOTIFY_CLIENT_ID='控えた Client ID'
 sh tools/mac/start.sh --shaders ~/vj/shaders
 ```
 
-1. kagelife を `-llm-slots llm_a,llm_b` 付きで、窓表示のまま背景で起動します。pid は `~/.cache/kagelife/kagelife.pid`、ログは `~/.cache/kagelife/kagelife.log` に書きます
-2. nowplaying-spotify のコンテナを `kagelife-nowplaying-spotify` という名前で起動します。`~/.cache/kagelife/now_playing.json` に今の曲を書きます
-3. 3 秒後にコンテナが動いているかを見て、止まっていればそのログを出して終了コード 1 で終わります（kagelife は動いたままなので、`stop.sh` で止めます）
+1. kagelife を `-llm-slots llm_a,llm_b` 付きで（`human` と `--no-llm-slots` では付けずに）、窓表示のまま背景で起動します。pid は `~/.cache/kagelife/kagelife.pid`、ログは `~/.cache/kagelife/kagelife.log` に書きます
+2. `--mode` を付けたときだけ、構成の名前（`human` / `ai` / `full`）を `~/.cache/kagelife/kagelife_mode` に 1 語で書きます。付けないときは書かず、前回の残りがあれば消します。`stop.sh` もこのファイルを消します
+3. `full` で `kagelife-deck` のプロセスが無ければ、警告を 1 行出します（止めはしません）
+4. nowplaying-spotify を起動します（`human` では起動しません）。既定（`binary`）は `kagelife-mcp nowplaying-spotify --token ~/.config/kagelife/spotify-token.json --out ~/.cache/kagelife/now_playing.json --interval 3` を背景で動かし、pid を `nowplaying.pid`、出力を `nowplaying.log` に置きます。1 秒後に死んでいればログの末尾を出して終了コード 1 で終わります（kagelife は動いたままなので、`stop.sh` で止めます）
+5. `KAGELIFE_NOWPLAYING_RUNNER=docker` のときは、従来どおりコンテナ `kagelife-nowplaying-spotify` を起動し、3 秒後に動いているかを見ます
 
 `--` のあとに書いたものはそのまま kagelife に渡します（例: `-- -display 2 -fullscreen`）。
 
@@ -105,13 +126,17 @@ sh tools/mac/start.sh --shaders ~/vj/shaders
 | `--kagelife PATH` | `KAGELIFE_BIN` | PATH の `kagelife` | kagelife の実行ファイル |
 | `--cache DIR` | `KAGELIFE_CACHE` | `~/.cache/kagelife` | `now_playing.json`・pid・ログの置き場所 |
 | `--config DIR` | `KAGELIFE_CONFIG` | `~/.config/kagelife` | ログインで作ったトークンのフォルダ。コンテナに `/config` としてマウントする |
-| `--no-nowplaying` | | | kagelife だけを起動する。Spotify も Docker も使わない |
-| | `KAGELIFE_SPOTIFY_CLIENT_ID` | なし | Client ID。`--no-nowplaying` でなければ必須。無ければ何も起動せずに止まる |
+| `--mode MODE` | | なし | `human` / `ai` / `full`。`human` は nowplaying なし・`-llm-slots` なし、`ai` と `full` は nowplaying あり・`-llm-slots` あり。付けなければ従来と同じ |
+| `--no-nowplaying` | | | nowplaying を起動しない（Spotify も Docker も使わない）。`-llm-slots` は付いたまま |
+| `--no-llm-slots` | | | kagelife に `-llm-slots` を付けない |
+| | `KAGELIFE_SPOTIFY_CLIENT_ID` | なし | Client ID。nowplaying を起動するときは必須。無ければ何も起動せずに止まる。実行ファイルには環境変数で渡し、コマンドの行には載せない |
+| | `KAGELIFE_NOWPLAYING_RUNNER` | `binary` | `binary`（kagelife-mcp の実行ファイル）か `docker`（予備。Go 版を実機の Spotify で確かめるまでの道） |
+| | `KAGELIFE_MCP_BIN` | PATH の `kagelife-mcp` | binary の道で使う実行ファイル。無ければ何も起動せずに止まり、`docker` の道を案内する |
 | | `KAGELIFE_NOWPLAYING_IMAGE` | `kagelife-nowplaying-spotify` | コンテナの image |
 | | `KAGELIFE_NOWPLAYING_NAME` | `kagelife-nowplaying-spotify` | コンテナの名前 |
 | | `KAGELIFE_NOWPLAYING_INTERVAL` | `3` | Spotify を読む間隔（秒） |
 
-- Client ID は `-e KAGELIFE_SPOTIFY_CLIENT_ID` で名前だけをコンテナに渡します。値はコマンドの行にも画面にも出しません
+- Client ID は環境変数（Docker の道では `-e KAGELIFE_SPOTIFY_CLIENT_ID` の名前だけ）で渡します。値はコマンドの行にも画面にも出しません
 - kagelife がすでに動いている（pid のファイルの pid が生きている）とき、同じ名前のコンテナがあるとき、image が無いときは、何も起動せずに止まります
 - 終了コード: 0 = 起動した、1 = 起動しなかった・途中で止まった（理由は標準エラー）、2 = 使い方の誤り
 - `--cache` を既定から変えたときは、`tools/conductor/wait_next.sh` にも同じ場所を `KAGELIFE_CACHE` で渡します
@@ -194,7 +219,8 @@ sh tools/mac/stop.sh
 ```
 
 - `kagelife.pid` の kagelife に TERM を送り、5 秒以内に止まらなければ、そう伝えて終了コード 1 で終わります
-- コンテナ `kagelife-nowplaying-spotify` を止めて消します。image は残します
+- `nowplaying.pid` の nowplaying-spotify に TERM を送ります（kagelife と同じ待ち方）。Docker の道で起動したときは、コンテナ `kagelife-nowplaying-spotify` を止めて消します。image は残します
+- `kagelife_mode` を消します
 - 何も動いていなければ、何もせずに終了コード 0 で終わります
 - `--cache DIR` と `--no-nowplaying` は `start.sh` と同じ意味です
 
@@ -212,7 +238,7 @@ Spotify の Developer Policy は、次の 2 つを禁じています。
 
 ## テスト
 
-`start.sh` と `stop.sh` のテストは kagelife と docker を偽物に差し替え、引数と環境変数の扱いを確かめます。
+`start.sh` と `stop.sh` のテストは kagelife・docker・kagelife-mcp・pgrep を偽物に差し替え、引数と環境変数の扱いを確かめます。
 
 ```sh
 docker build -t kagelife-mac-test tools/mac

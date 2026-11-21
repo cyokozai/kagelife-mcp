@@ -41,6 +41,21 @@ esac
 exit 0
 """
 
+FAKE_MCP = """#!/bin/sh
+printf '%s\\n' "$*" > "$FAKE_MCP_ARGS"
+printf '%s\\n' "${KAGELIFE_SPOTIFY_CLIENT_ID:-unset}" > "$FAKE_MCP_ARGS.env"
+if [ -e "$FAKE_MCP_DIE" ]; then
+  echo "fake mcp: dying" >&2
+  exit 1
+fi
+trap 'exit 0' TERM INT
+while :; do sleep 1; done
+"""
+
+FAKE_PGREP = """#!/bin/sh
+[ -e "$FAKE_DECK" ]
+"""
+
 SECRET = "fake-client-id-0123456789"
 
 
@@ -61,6 +76,12 @@ class ScriptTest(unittest.TestCase):
         self.docker = self.tmp / "docker"
         write_exec(self.kl, FAKE_KAGELIFE)
         write_exec(self.docker, FAKE_DOCKER)
+        (self.config / "spotify-token.json").write_text("{}")
+        self.mcp = self.tmp / "kagelife-mcp"
+        self.pgrep = self.tmp / "pgrep"
+        write_exec(self.mcp, FAKE_MCP)
+        write_exec(self.pgrep, FAKE_PGREP)
+        self.mcp_args = self.tmp / "mcp_args"
         self.kl_args = self.tmp / "kl_args"
         self.docker_log = self.tmp / "docker_log"
         self.env = {
@@ -76,16 +97,22 @@ class ScriptTest(unittest.TestCase):
             "KAGELIFE_SHADERS": str(self.shaders),
             "KAGELIFE_CACHE": str(self.cache),
             "KAGELIFE_CONFIG": str(self.config),
+            "KAGELIFE_MCP_BIN": str(self.mcp),
+            "KAGELIFE_PGREP": str(self.pgrep),
+            "FAKE_MCP_ARGS": str(self.mcp_args),
+            "FAKE_MCP_DIE": str(self.tmp / "mcpdie"),
+            "FAKE_DECK": str(self.tmp / "deck"),
         }
 
     def tearDown(self):
         # Never leave a fake kagelife running.
-        pid_file = self.cache / "kagelife.pid"
-        if pid_file.exists():
-            try:
-                os.kill(int(pid_file.read_text().strip()), 15)
-            except (ValueError, ProcessLookupError):
-                pass
+        for name in ("kagelife.pid", "nowplaying.pid"):
+            pid_file = self.cache / name
+            if pid_file.exists():
+                try:
+                    os.kill(int(pid_file.read_text().strip()), 15)
+                except (ValueError, ProcessLookupError):
+                    pass
         shutil.rmtree(self.tmp, ignore_errors=True)
 
     def run_sh(self, script, *args, env=None):
@@ -187,7 +214,7 @@ class ScriptTest(unittest.TestCase):
         self.assertEqual(self.pid(), first)
 
     def test_nowplaying_container_args_and_client_id_never_printed(self):
-        r = self.run_sh(START, env={"KAGELIFE_SPOTIFY_CLIENT_ID": SECRET, "KAGELIFE_START_CHECK": "0"})
+        r = self.run_sh(START, env={"KAGELIFE_NOWPLAYING_RUNNER": "docker", "KAGELIFE_SPOTIFY_CLIENT_ID": SECRET, "KAGELIFE_START_CHECK": "0"})
         self.assertEqual(r.returncode, 0, r.stderr)
         runs = [c for c in self.docker_calls() if c.startswith("run ")]
         self.assertEqual(runs, [
@@ -201,7 +228,7 @@ class ScriptTest(unittest.TestCase):
 
     def test_missing_image_tells_how_to_build(self):
         (self.tmp / "noimage").touch()
-        r = self.run_sh(START, env={"KAGELIFE_SPOTIFY_CLIENT_ID": SECRET})
+        r = self.run_sh(START, env={"KAGELIFE_NOWPLAYING_RUNNER": "docker", "KAGELIFE_SPOTIFY_CLIENT_ID": SECRET})
         self.assertEqual(r.returncode, 1)
         self.assertIn("docker build", r.stderr)
         self.assertFalse((self.cache / "kagelife.pid").exists())
@@ -214,19 +241,117 @@ class ScriptTest(unittest.TestCase):
 
     def test_existing_container_is_refused(self):
         (self.tmp / "running").touch()
-        r = self.run_sh(START, env={"KAGELIFE_SPOTIFY_CLIENT_ID": SECRET})
+        r = self.run_sh(START, env={"KAGELIFE_NOWPLAYING_RUNNER": "docker", "KAGELIFE_SPOTIFY_CLIENT_ID": SECRET})
         self.assertEqual(r.returncode, 1)
         self.assertIn("stop.sh", r.stderr)
         self.assertFalse(any(c.startswith("run ") for c in self.docker_calls()))
         self.assertFalse((self.cache / "kagelife.pid").exists())
 
     def test_container_name_and_image_from_env(self):
-        r = self.run_sh(START, env={"KAGELIFE_SPOTIFY_CLIENT_ID": SECRET, "KAGELIFE_START_CHECK": "0",
+        r = self.run_sh(START, env={"KAGELIFE_NOWPLAYING_RUNNER": "docker",
+                                    "KAGELIFE_SPOTIFY_CLIENT_ID": SECRET, "KAGELIFE_START_CHECK": "0",
                                     "KAGELIFE_NOWPLAYING_NAME": "np-x", "KAGELIFE_NOWPLAYING_IMAGE": "img-y"})
         self.assertEqual(r.returncode, 0, r.stderr)
         run = [c for c in self.docker_calls() if c.startswith("run ")][0]
         self.assertIn("--name np-x ", run)
         self.assertIn(" img-y --token", run)
+
+    # --- modes, binary runner (new) ---
+
+    def kl_args_for(self, *args, env=None):
+        r = self.run_sh(START, *args, env=env)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        return r, self.wait_args()
+
+    def test_mode_human_has_no_llm_slots_and_no_nowplaying(self):
+        r, args = self.kl_args_for("--mode", "human")
+        self.assertEqual(args, "-shaders %s" % self.shaders)
+        self.assertEqual((self.cache / "kagelife_mode").read_text(), "human\n")
+        self.assertFalse((self.cache / "nowplaying.pid").exists())
+        self.assertEqual(self.docker_calls(), [])
+
+    def test_mode_ai_starts_nowplaying_binary_with_llm_slots(self):
+        r, args = self.kl_args_for("--mode", "ai", env={"KAGELIFE_SPOTIFY_CLIENT_ID": SECRET})
+        self.assertEqual(args, "-shaders %s -llm-slots llm_a,llm_b" % self.shaders)
+        self.assertEqual((self.cache / "kagelife_mode").read_text(), "ai\n")
+        for _ in range(50):
+            if self.mcp_args.exists() and self.mcp_args.read_text():
+                break
+            time.sleep(0.1)
+        self.assertEqual(self.mcp_args.read_text().strip(),
+                         "nowplaying-spotify --token %s/spotify-token.json --out %s/now_playing.json --interval 3"
+                         % (self.config, self.cache))
+        # The value reaches the process by environment only.
+        self.assertEqual(Path(str(self.mcp_args) + ".env").read_text().strip(), SECRET)
+        self.assertTrue(self.alive(int((self.cache / "nowplaying.pid").read_text())))
+        self.assertTrue((self.cache / "nowplaying.log").exists())
+        self.assertEqual(self.docker_calls(), [])
+        self.assertNotIn(SECRET, r.stdout + r.stderr)
+
+    def test_mode_full_warns_without_deck_and_not_with_deck(self):
+        r, _ = self.kl_args_for("--mode", "full", env={"KAGELIFE_SPOTIFY_CLIENT_ID": SECRET})
+        self.assertIn("kagelife-deck", r.stderr)
+        self.assertEqual((self.cache / "kagelife_mode").read_text(), "full\n")
+        self.assertEqual(self.run_sh(STOP).returncode, 0)
+        self.kl_args.unlink()
+        (self.tmp / "deck").touch()
+        r, _ = self.kl_args_for("--mode", "full", env={"KAGELIFE_SPOTIFY_CLIENT_ID": SECRET})
+        self.assertNotIn("kagelife-deck", r.stderr)
+
+    def test_bad_mode_is_usage_error(self):
+        r = self.run_sh(START, "--mode", "robot")
+        self.assertEqual(r.returncode, 2)
+        self.assertFalse((self.cache / "kagelife.pid").exists())
+
+    def test_no_mode_writes_nothing_and_clears_stale_mode_file(self):
+        self.cache.mkdir(parents=True)
+        (self.cache / "kagelife_mode").write_text("ai\n")
+        self.kl_args_for("--no-nowplaying")
+        self.assertFalse((self.cache / "kagelife_mode").exists())
+
+    def test_no_llm_slots_flag(self):
+        _, args = self.kl_args_for("--no-nowplaying", "--no-llm-slots")
+        self.assertEqual(args, "-shaders %s" % self.shaders)
+
+    def test_stop_stops_nowplaying_process_and_removes_mode_file(self):
+        self.kl_args_for("--mode", "ai", env={"KAGELIFE_SPOTIFY_CLIENT_ID": SECRET})
+        npid = int((self.cache / "nowplaying.pid").read_text())
+        r = self.run_sh(STOP)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        for _ in range(50):
+            if not self.alive(npid):
+                break
+            time.sleep(0.1)
+        self.assertFalse(self.alive(npid))
+        self.assertFalse((self.cache / "nowplaying.pid").exists())
+        self.assertFalse((self.cache / "kagelife_mode").exists())
+
+    def test_missing_mcp_binary_starts_nothing_and_points_to_docker(self):
+        r = self.run_sh(START, "--mode", "ai", env={"KAGELIFE_SPOTIFY_CLIENT_ID": SECRET,
+                                                    "KAGELIFE_MCP_BIN": str(self.tmp / "nobin")})
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("KAGELIFE_NOWPLAYING_RUNNER=docker", r.stderr)
+        self.assertFalse((self.cache / "kagelife.pid").exists())
+        self.assertFalse(self.kl_args.exists())
+
+    def test_missing_token_file_says_login_first_before_starting(self):
+        (self.config / "spotify-token.json").unlink()
+        r = self.run_sh(START, "--mode", "ai", env={"KAGELIFE_SPOTIFY_CLIENT_ID": SECRET})
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("nowplaying-spotify login --token", r.stderr)
+        self.assertFalse(self.kl_args.exists())
+
+    def test_nowplaying_binary_that_dies_is_reported(self):
+        (self.tmp / "mcpdie").touch()
+        r = self.run_sh(START, "--mode", "ai", env={"KAGELIFE_SPOTIFY_CLIENT_ID": SECRET})
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("fake mcp: dying", r.stderr)
+        self.assertFalse((self.cache / "nowplaying.pid").exists())
+
+    def test_client_id_missing_in_ai_mode(self):
+        r = self.run_sh(START, "--mode", "ai")
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("KAGELIFE_SPOTIFY_CLIENT_ID", r.stderr)
 
     # --- stop.sh ---
 
