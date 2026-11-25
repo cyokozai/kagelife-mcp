@@ -5,7 +5,7 @@
   - 1 行目が `//kage:unit pixels`
   - ASCII だけ（コメントも。日本語は VJ 機で豆腐になる）
   - 64KiB 以下
-  - パッケージの階層の var（= uniform）が kagelife の 6 つだけで、型が合っている
+  - パッケージの階層の var（= uniform）が kagelife の 10 個（Time など 6 つと、-audio の Audio* 4 つ）だけで、型が合っている
   - func Fragment がある
   - 1 画素あたりのループの回数の目安（定数の上限を掛け合わせて足す）
 
@@ -24,7 +24,7 @@ MAX_BYTES = 64 * 1024
 DIRECTIVE = "//kage:unit pixels"
 
 # kagelife が毎フレーム渡す uniform。同じ名前で型が違うと描画時に panic する。
-UNIFORMS = {
+BASE_UNIFORMS = {
     "Time": "float",
     "Beat": "float",
     "Frame": "int",
@@ -32,6 +32,15 @@ UNIFORMS = {
     "Resolution": "vec2",
     "Cursor": "vec2",
 }
+
+# 上の 6 つに、-audio で起動したときだけ値が入る音の 4 つ（無しは 0、0〜1）を足したもの。
+UNIFORMS = dict(
+    BASE_UNIFORMS,
+    AudioBass="float",
+    AudioMid="float",
+    AudioHigh="float",
+    AudioOnset="float",
+)
 
 # 1 画素あたりのループの回数の目安。04_warp（20 回、本体が重い）は HD 630 で、重ね表示ありで 36fps 前後、なしで 45fps 前後。
 LOOP_WARN = 16
@@ -124,23 +133,26 @@ def parse_var_spec(spec):
     return [(n, m.group(2)) for n in names], m.group(3) is not None
 
 
-def check_uniform(name, typ, has_init, line, rep):
+def check_uniform(name, typ, has_init, line, rep, uniforms=None):
+    """uniforms は許可する名前と型の表。None なら UNIFORMS。"""
+    if uniforms is None:
+        uniforms = UNIFORMS
     if has_init:
         rep.add("error", "uniform_init", "package-level var %s has an initializer; uniforms cannot" % name, line)
-    if name not in UNIFORMS:
+    if name not in uniforms:
         rep.add(
             "error",
             "unknown_uniform",
             "package-level var %s %s is not a kagelife uniform (allowed: %s)"
-            % (name, typ, ", ".join("%s %s" % kv for kv in sorted(UNIFORMS.items()))),
+            % (name, typ, ", ".join("%s %s" % kv for kv in sorted(uniforms.items()))),
             line,
         )
         return
-    if UNIFORMS[name] != typ:
+    if uniforms[name] != typ:
         rep.add(
             "error",
             "uniform_type",
-            "uniform %s must be %s, not %s (a type mismatch panics at draw time)" % (name, UNIFORMS[name], typ),
+            "uniform %s must be %s, not %s (a type mismatch panics at draw time)" % (name, uniforms[name], typ),
             line,
         )
         return
@@ -161,8 +173,8 @@ def resolve_bound(expr, consts):
     return None
 
 
-def scan(code, rep):
-    """コメントを除いたコードを行ごとに読み、uniform と for のループを数える。"""
+def scan(code, rep, uniforms=None):
+    """コメントを除いたコードを行ごとに読み、uniform と for のループを数える。uniforms は許可表（None なら UNIFORMS）。"""
     consts = {}
     lines = code.split("\n")
     # 1 周目: パッケージの階層の const（整数のもの）を集める。
@@ -194,7 +206,7 @@ def scan(code, rep):
                         rep.add("warn", "var_unparsed", "could not read var spec %r" % s, no)
                     else:
                         for name, typ in parsed[0]:
-                            check_uniform(name, typ, parsed[1], no, rep)
+                            check_uniform(name, typ, parsed[1], no, rep, uniforms)
             elif VAR_GROUP_OPEN.match(s):
                 in_group = True
             else:
@@ -205,7 +217,7 @@ def scan(code, rep):
                         rep.add("warn", "var_unparsed", "could not read var spec %r" % s, no)
                     else:
                         for name, typ in parsed[0]:
-                            check_uniform(name, typ, parsed[1], no, rep)
+                            check_uniform(name, typ, parsed[1], no, rep, uniforms)
             if FUNC_FRAGMENT.match(s):
                 has_fragment = True
 

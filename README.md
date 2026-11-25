@@ -11,6 +11,7 @@ MCP クライアントから stdio で起動され、ツール呼び出しを、
 
 - 先に kagelife（GUI）を起動しておくこと。GUI が起動していなければ、各ツールはエラーで起動を促します（`kagelife-mcp` 自体は落ちません）。
 - kagelife 側は **制御口 v1** に対応した版が必要です（発見ファイルの `version` が `1`）。版が合わなければ、ツールは版の不一致を伝えるエラーを返します。
+- 会場の音に反応させるには、kagelife を `-audio <デバイス>` 付きで起動します（kagelife の PR #53 を含む版が要ります。v0.2.0 には無い）。`get_state` の `features` に `audio` が載り、`vj_song` と `get_kage_guide` が予約 uniform `AudioBass`・`AudioMid`・`AudioHigh`・`AudioOnset` の使い方を案内します。手順は [tools/mac/README.md](tools/mac/README.md) の「音に反応させる（-audio）」。
 - 制御口 v1 の契約の正典は kagelife の `docs/adr/ADR-006-control-api.md` です。
 
 ## インストール

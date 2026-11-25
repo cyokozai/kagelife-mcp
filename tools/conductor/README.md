@@ -152,7 +152,7 @@ Mac 1 台の構成の前提は `tools/mac/README.md` に書いてあります。
 | `first_line` | 1 行目が `//kage:unit pixels` でない（BOM も含む） | 誤り |
 | `non_ascii` | ASCII 以外の文字がある（行番号を出す） | 誤り |
 | `too_large` | 65536 バイトを超える | 誤り |
-| `unknown_uniform` / `uniform_type` | パッケージの階層の `var` が 6 つの uniform 以外か、型が違う | 誤り |
+| `unknown_uniform` / `uniform_type` | パッケージの階層の `var` が 10 個の uniform（Time など 6 つと Audio* 4 つ）以外か、型が違う | 誤り |
 | `no_fragment` | `func Fragment(` が無い | 誤り |
 | `loop_too_heavy` | 1 画素あたりのループが 64 回を超える | 誤り |
 | `loop_heavy` | 16 回以上 | 警告 |

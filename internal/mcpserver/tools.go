@@ -70,6 +70,10 @@ type stateResp struct {
 // featureLLMSlots は -llm-slots に対応した GUI が features に出す名前。
 const featureLLMSlots = "llm_slots"
 
+// featureAudio は -audio <デバイス> で起動したときだけ GUI が features に出す名前。
+// keys・llm_slots と違い、フラグ無しでは出さない。
+const featureAudio = "audio"
+
 // onScreen は name が映っているように見えるかを返す。active と同じ名前か、フェード中の fade.target。
 // state からはスロットのコンパイルの成否が分からないので目安に留め、最終判断は GUI の 409 slot_live に従う。
 func (s stateResp) onScreen(name string) bool {
@@ -220,6 +224,14 @@ func formatState(s stateResp) string {
 	}
 	fmt.Fprintf(&b, "llm_slots: %s\n", formatSlots(s))
 	fmt.Fprintf(&b, "features: %s\n", orNone(strings.Join(s.Features, ", ")))
+	switch {
+	case len(s.Features) == 0:
+		// features を返さない古い GUI は、音に対応しているか分からないので何も言わない。
+	case slices.Contains(s.Features, featureAudio):
+		b.WriteString("audio: on (AudioBass/AudioMid/AudioHigh/AudioOnset carry the venue sound)\n")
+	default:
+		b.WriteString("audio: off (the four Audio* uniforms are 0; start kagelife with -audio <device>, see -list-audio)\n")
+	}
 	fmt.Fprintf(&b, "fps: %s\n", fmtNum(s.FPS))
 	if len(s.Resolution) == 2 {
 		fmt.Fprintf(&b, "resolution: %dx%d\n", s.Resolution[0], s.Resolution[1])

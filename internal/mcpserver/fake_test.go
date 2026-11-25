@@ -40,6 +40,8 @@ type fakeControl struct {
 	legacy bool
 	// noPreviews は -previews=false を模す。features に previews を出さず、GET /v1/previews は 404 not_found。
 	noPreviews bool
+	// audio は -audio を模す。features に audio を足す（フラグ無しでは出さない）。
+	audio bool
 	// previewFrames は GET /v1/previews が順に返す keys。尽きたら最後のものを繰り返す。空なら keys は []。
 	previewFrames [][]fakePreviewKey
 	// previewCalls は GET /v1/previews を受けた回数。
@@ -186,11 +188,14 @@ func (f *fakeControl) state(w http.ResponseWriter, _ *http.Request) {
 		// このビルドの GUI は常に配列を出す（フラグ無しなら llm_slots は []）。
 		st["llm_slots"] = append([]string{}, f.llmSlots...)
 		// 本体の features.go と同じく名前順。-previews=false のときだけ previews を出さない（ADR-006 補足 27・32）。
-		if f.noPreviews {
-			st["features"] = []string{"keys", "llm_slots"}
-		} else {
-			st["features"] = []string{"keys", "llm_slots", "previews"}
+		feats := []string{"keys", "llm_slots"}
+		if !f.noPreviews {
+			feats = append(feats, "previews")
 		}
+		if f.audio {
+			feats = append([]string{"audio"}, feats...)
+		}
+		st["features"] = feats
 	}
 	writeFakeJSON(w, http.StatusOK, st)
 }

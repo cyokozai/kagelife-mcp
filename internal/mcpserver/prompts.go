@@ -11,6 +11,7 @@ import (
 const vjSongSteps = `Write one new Kage shader for the song that is playing now on the kagelife VJ screen, and bring it on screen.
 
 1. Call get_state. Look at active, llm_slots, keys (which shader each number key selects) and fps. Call get_kage_guide and follow it.
+   If features in get_state lists audio (kagelife started with -audio), use the four uniforms AudioBass, AudioMid, AudioHigh and AudioOnset so the picture follows the sound in the venue.
 2. If get_state lists llm_slots (kagelife started with -llm-slots), write with write_back_slot: it writes the reserved slot that is not on screen.
    If llm_slots is none, write a new name with write_shader, and suggest to the user that they restart kagelife with -llm-slots llm_a,llm_b so the screen is never overwritten.
 3. If the write fails with 422 (compile_error or unit_pixels_required), read the diagnostics (line:col: message), fix the source and send the full source again with the same tool. Try at most 3 times; then stop and tell the user what failed.
@@ -18,6 +19,7 @@ const vjSongSteps = `Write one new Kage shader for the song that is playing now 
 
 Rules:
 - Make the motion ride the music with Beat (phase within the beat, 0 on the beat) and Time (slow drift), so one shader works for the whole song.
+- Use Audio* for shapes, positions, hue and thin lines. Do not tie them straight to the brightness of the whole screen (that avoids flashing more than 3 times per second). Make the picture work when all four are 0 (kagelife without -audio).
 - Never flash the brightness of the whole screen more than 3 times per second (photosensitive viewers). Pulse on the beat with a smooth decay instead of hard full-screen strobes.
 - If kagelife was started with -link (synced to Ableton Link, e.g. rekordbox LINK), never call set_bpm: the tempo comes from Link and set_bpm is reverted. get_state cannot tell whether Link is synced; if unsure, ask the user and leave the tempo alone.
 - After the crossfade, call get_state again. If fps is below 50, write a lighter version (fewer loop iterations, fewer noise octaves, no deep raymarching) to the slot that is not on screen and crossfade to it.`

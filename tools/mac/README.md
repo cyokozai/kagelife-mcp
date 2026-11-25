@@ -32,6 +32,7 @@ Mac: Spotify -> nowplaying-spotify (kagelife-mcp のサブコマンド) -> ~/.ca
 | AI の構成で起動する | `sh tools/mac/start.sh --shaders ~/vj/shaders --mode ai` |
 | フル構成で起動する | `sh tools/mac/start.sh --shaders ~/vj/shaders --mode full` |
 | 外部ディスプレイに全画面で出す | `sh tools/mac/start.sh --shaders ~/vj/shaders -- -display 2 -fullscreen` |
+| 会場の音に反応させる | `kagelife -list-audio` で番号を見て、`sh tools/mac/start.sh --shaders ~/vj/shaders --audio 2`（下の「音に反応させる（-audio）」） |
 | Spotify なしで kagelife だけ起動する | `sh tools/mac/start.sh --shaders ~/vj/shaders --no-nowplaying` |
 | 指揮を始める | Claude Code に「`tools/conductor/CONDUCTOR.md` を読んで指揮を始めて」と頼む |
 | 常駐させる | 下の「常駐させる」 |
@@ -129,6 +130,8 @@ sh tools/mac/start.sh --shaders ~/vj/shaders
 | `--mode MODE` | | なし | `human` / `ai` / `full`。`human` は nowplaying なし・`-llm-slots` なし、`ai` と `full` は nowplaying あり・`-llm-slots` あり。付けなければ従来と同じ |
 | `--no-nowplaying` | | | nowplaying を起動しない（Spotify も Docker も使わない）。`-llm-slots` は付いたまま |
 | `--no-llm-slots` | | | kagelife に `-llm-slots` を付けない |
+| `--audio DEV` | `KAGELIFE_AUDIO` | なし | kagelife に `-audio DEV` を渡す（`default`・番号・名前の一部）。付けなければ音は取り込まない |
+| `--audio-line` | `KAGELIFE_AUDIO_LINE=1` | | `-audio-line` を渡す（ライン入力として、`-av-offset` の分だけ音の値を遅らせる）。`--audio` が要る |
 | | `KAGELIFE_SPOTIFY_CLIENT_ID` | なし | Client ID。nowplaying を起動するときは必須。無ければ何も起動せずに止まる。実行ファイルには環境変数で渡し、コマンドの行には載せない |
 | | `KAGELIFE_NOWPLAYING_RUNNER` | `binary` | `binary`（kagelife-mcp の実行ファイル）か `docker`（予備。Go 版を実機の Spotify で確かめるまでの道） |
 | | `KAGELIFE_MCP_BIN` | PATH の `kagelife-mcp` | binary の道で使う実行ファイル。無ければ何も起動せずに止まり、`docker` の道を案内する |
@@ -140,6 +143,30 @@ sh tools/mac/start.sh --shaders ~/vj/shaders
 - kagelife がすでに動いている（pid のファイルの pid が生きている）とき、同じ名前のコンテナがあるとき、image が無いときは、何も起動せずに止まります
 - 終了コード: 0 = 起動した、1 = 起動しなかった・途中で止まった（理由は標準エラー）、2 = 使い方の誤り
 - `--cache` を既定から変えたときは、`tools/conductor/wait_next.sh` にも同じ場所を `KAGELIFE_CACHE` で渡します
+
+## 音に反応させる（-audio）
+
+kagelife を `-audio` 付きで起動すると、会場の音が予約 uniform `AudioBass`・`AudioMid`・`AudioHigh`・`AudioOnset`（どれも `float`、0〜1）に入ります。付けなければ 4 つとも 0 です。kagelife は PR #53（kagelife 本体の `-audio`）を含む版が要ります。v0.2.0 には無い版です。
+
+1. `kagelife -list-audio` で入力デバイスの番号を確かめます（一覧を出して終了します）
+2. `sh tools/mac/start.sh --shaders ~/vj/shaders --audio 2` で起動します（`-- -audio 2` でも同じです）
+3. kagelife の HUD の `Audio:` と、`get_state` の `audio: on` で、音を取り込めているか確かめます。デバイスの失敗は `last_error`（`shader` が `-audio`）と HUD に出て、uniform は 0 に戻ります（`features` の `audio` は出し続けます）
+4. ライン入力のときは `--audio-line` を足します。マイクとして使うときは付けません
+
+- macOS のマイクの許可は、起動したターミナルのアプリに付く見込みです（未確認）
+- シェーダの側は、4 つが 0 でも絵として成り立たせ、画面全体の明るさに直結させません。`vj_song` と `get_kage_guide` がそう案内します
+
+実機で確かめたこと（2026-11-22、MacBook Air の内蔵マイク）:
+
+| 確かめたこと | 結果 |
+|---|---|
+| `kagelife -list-audio` | `audio 1: …のマイク` / `audio 2: MacBook Airのマイク (default)` / `audio 3: Microsoft Teams Audio` |
+| `start.sh --shaders ~/myproject/kagelife/shaders -- -audio 2` | ログに `audio: capturing "MacBook Airのマイク" (mic, not delayed, 48000 Hz)` |
+| `GET /v1/state` | `features: ["audio","keys","llm_slots","previews"]`、`last_error: null`、fps 57〜60 |
+| `write_back_slot` で音の 4 uniform を使うシェーダを `llm_a` に書いて `crossfade` | 手拍子・音楽に画面が反応した（ユーザーが確認） |
+| Spotify の `now_playing.json` に合わせ、曲ごとに `write_back_slot` → `crossfade` を 8 曲で回す | fps は 57〜60 を保った |
+
+8 曲は、Tell Your World、ヒャダインのじょーじょーゆーじょー、COZMIC TRAVEL、ray、あげぽよTONIGHT、魂のルフラン、世界最後の音楽隊、DJ! DJ! です。確かめていないこと: ライン入力（`--audio-line`）、マイクの許可がどのアプリに付くか、Mac のループバック。
 
 ## 指揮を始める
 

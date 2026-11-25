@@ -182,6 +182,45 @@ class ScriptTest(unittest.TestCase):
         self.assertEqual(self.wait_args(),
                          "-shaders %s -llm-slots llm_a,llm_b -display 2 -fullscreen" % self.shaders)
 
+    def test_audio_option_is_passed_to_kagelife(self):
+        r = self.run_sh(START, "--no-nowplaying", "--audio", "2")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.wait_args(), "-shaders %s -llm-slots llm_a,llm_b -audio 2" % self.shaders)
+
+    def test_audio_line_and_extra_args(self):
+        r = self.run_sh(START, "--no-nowplaying", "--audio", "default", "--audio-line", "--", "-display", "2")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.wait_args(),
+                         "-shaders %s -llm-slots llm_a,llm_b -audio default -audio-line -display 2" % self.shaders)
+
+    def test_audio_env_is_passed_to_kagelife(self):
+        r = self.run_sh(START, "--no-nowplaying", env={"KAGELIFE_AUDIO": "Mic", "KAGELIFE_AUDIO_LINE": "1"})
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.wait_args(), "-shaders %s -llm-slots llm_a,llm_b -audio Mic -audio-line" % self.shaders)
+
+    def test_audio_line_without_audio_is_an_error(self):
+        r = self.run_sh(START, "--no-nowplaying", "--audio-line")
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("--audio-line needs --audio", r.stderr)
+        self.assertFalse((self.cache / "kagelife.pid").exists())
+
+    def test_audio_empty_value_is_usage_error(self):
+        r = self.run_sh(START, "--no-nowplaying", "--audio", "")
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("--audio", r.stderr)
+        self.assertFalse((self.cache / "kagelife.pid").exists())
+
+    def test_audio_value_starting_with_dash_is_usage_error(self):
+        r = self.run_sh(START, "--no-nowplaying", "--audio", "--audio-line")
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("--audio", r.stderr)
+        self.assertFalse((self.cache / "kagelife.pid").exists())
+
+    def test_without_audio_no_audio_flag(self):
+        r = self.run_sh(START, "--no-nowplaying")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertNotIn("-audio", self.wait_args())
+
     def test_options_override_environment(self):
         other = self.tmp / "other-shaders"
         other.mkdir()

@@ -1,6 +1,6 @@
 #!/bin/sh
 # start.sh [--mode human|ai|full] [--shaders DIR] [--kagelife PATH] [--cache DIR] [--config DIR]
-#          [--no-nowplaying] [--no-llm-slots] [-- KAGELIFE_ARGS...]
+#          [--no-nowplaying] [--no-llm-slots] [--audio DEV [--audio-line]] [-- KAGELIFE_ARGS...]
 # Start kagelife (window, -llm-slots llm_a,llm_b) in the background on this Mac, and nowplaying-spotify
 # (a kagelife-mcp executable, or a Docker container) that writes <cache>/now_playing.json. stop.sh stops both.
 # Does not start the Docker engine. Installs nothing. Exit: 0 started, 1 not started (reason on stderr), 2 usage.
@@ -11,7 +11,7 @@ here=$(cd "$(dirname "$0")" && pwd)
 usage() {
   cat >&2 <<'EOF'
 usage: start.sh [--mode human|ai|full] [--shaders DIR] [--kagelife PATH] [--cache DIR] [--config DIR]
-                [--no-nowplaying] [--no-llm-slots] [-- KAGELIFE_ARGS...]
+                [--no-nowplaying] [--no-llm-slots] [--audio DEV [--audio-line]] [-- KAGELIFE_ARGS...]
   --mode MODE      human: kagelife only, no -llm-slots (1-9 are all normal shaders)
                    ai:    kagelife -llm-slots llm_a,llm_b + nowplaying
                    full:  same as ai, and warns when kagelife-deck is not running
@@ -22,6 +22,8 @@ usage: start.sh [--mode human|ai|full] [--shaders DIR] [--kagelife PATH] [--cach
   --config DIR     folder with spotify-token.json from login (env KAGELIFE_CONFIG; default ~/.config/kagelife)
   --no-nowplaying  start kagelife only (no Spotify, no Docker); -llm-slots stays
   --no-llm-slots   start kagelife without -llm-slots
+  --audio DEV      pass kagelife -audio DEV (default, a number or part of a name; env KAGELIFE_AUDIO). See kagelife -list-audio
+  --audio-line     pass kagelife -audio-line: a line input, delayed by -av-offset (env KAGELIFE_AUDIO_LINE=1). Needs --audio
   after --          extra kagelife flags, e.g. -- -display 2 -fullscreen
 env: KAGELIFE_SPOTIFY_CLIENT_ID (required unless nowplaying is off),
      KAGELIFE_NOWPLAYING_RUNNER (binary [default] | docker), KAGELIFE_MCP_BIN (default kagelife-mcp on PATH),
@@ -44,6 +46,9 @@ pgrep_cmd=${KAGELIFE_PGREP:-pgrep}
 mode=
 nowplaying=1
 llm_slots=1
+audio=${KAGELIFE_AUDIO:-}
+audio_line=0
+[ "${KAGELIFE_AUDIO_LINE:-}" != 1 ] || audio_line=1
 no_np_flag=0
 no_llm_flag=0
 
@@ -60,6 +65,13 @@ while [ $# -gt 0 ]; do
     --mode) need_arg "$1" $#; mode=$2; shift 2 ;;
     --no-nowplaying) no_np_flag=1; shift ;;
     --no-llm-slots) no_llm_flag=1; shift ;;
+    --audio)
+      need_arg "$1" $#
+      case $2 in
+        ''|-*) echo "start.sh: --audio needs a device (default, a number or part of a name), got: '$2'" >&2; usage; exit 2 ;;
+      esac
+      audio=$2; shift 2 ;;
+    --audio-line) audio_line=1; shift ;;
     -h|--help) usage; exit 0 ;;
     --) shift; break ;;
     *) echo "start.sh: unknown option: $1" >&2; usage; exit 2 ;;
@@ -79,6 +91,9 @@ case $runner in
   *) die "start.sh: KAGELIFE_NOWPLAYING_RUNNER must be binary or docker (got: $runner)" ;;
 esac
 
+if [ "$audio_line" = 1 ] && [ -z "$audio" ]; then
+  echo "start.sh: --audio-line needs --audio DEV (or KAGELIFE_AUDIO)" >&2; usage; exit 2
+fi
 [ -n "$shaders" ] || die "start.sh: give the shader folder with --shaders DIR or KAGELIFE_SHADERS"
 [ -d "$shaders" ] || die "start.sh: shader folder not found: $shaders"
 command -v "$bin" >/dev/null 2>&1 || die "start.sh: kagelife not found: $bin (use --kagelife PATH or KAGELIFE_BIN)"
@@ -129,6 +144,11 @@ rm -f "$mode_file"
 
 slots_arg=
 [ "$llm_slots" = 0 ] || slots_arg=1
+
+# Audio flags go in front of the user's extra flags: set -- rebuilds the argument list.
+if [ -n "$audio" ]; then
+  if [ "$audio_line" = 1 ]; then set -- -audio "$audio" -audio-line "$@"; else set -- -audio "$audio" "$@"; fi
+fi
 
 # kagelife keeps running after this script exits; its output goes to the log.
 if [ -n "$slots_arg" ]; then
