@@ -155,8 +155,19 @@ class Uniforms(unittest.TestCase):
             ["Beat", "Cursor", "Frame", "Random", "Resolution", "Time"],
         )
 
+    def test_audio_uniforms_ok(self):
+        decls = "var AudioBass float\nvar AudioMid float\nvar AudioHigh float\nvar AudioOnset float\n"
+        rc, rep = run_json(with_body(decls=decls))
+        self.assertEqual(codes(rep, "error"), [])
+        self.assertEqual(sorted(rep["uniforms"]), ["AudioBass", "AudioHigh", "AudioMid", "AudioOnset"])
+
+    def test_audio_uniform_wrong_type(self):
+        rc, rep = run_json(with_body(decls="var AudioBass vec2\n"))
+        self.assertEqual(rc, 1)
+        self.assertIn("uniform_type", codes(rep, "error"))
+
     def test_unknown_uniform(self):
-        rc, rep = run_json(with_body(decls="var AudioBass float\n"))
+        rc, rep = run_json(with_body(decls="var AudioBassX float\n"))
         self.assertEqual(rc, 1)
         self.assertIn("unknown_uniform", codes(rep, "error"))
 

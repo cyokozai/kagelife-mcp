@@ -156,7 +156,8 @@ Stream Deck の合図は `~/.cache/kagelife/cue.json` に書かれる。
 
 - 1 行目は `//kage:unit pixels`。続いて `package main` と `func Fragment(dstPos vec4, srcPos vec2, color vec4) vec4`
 - コメントは短い英語（ASCII だけ）。64KiB 以下
-- uniform は `Time float`・`Beat float`・`Frame int`・`Random float`・`Resolution vec2`・`Cursor vec2` だけ。名前が同じで型が違うと描画時に panic する
+- uniform は `Time float`・`Beat float`・`Frame int`・`Random float`・`Resolution vec2`・`Cursor vec2` と、音の `AudioBass float`・`AudioMid float`・`AudioHigh float`・`AudioOnset float`（0〜1）だけ。名前が同じで型が違うと描画時に panic する
+- 音に反応させるときは、`get_state` の `features` に `audio` があるか見る（kagelife を `-audio` 付きで起動したときだけ載る。無ければ 4 つとも 0）。0 でも絵として成り立たせ、画面全体の明るさには直結させない
 - 光の決まり（basic-vj の README と同じ）
   - 画面全体を光らせるのは 1 拍に 1 回まで
   - 1 秒に 3 回を超えない（拍ごとの明滅は 180 BPM 以下でだけ成り立つ。曲の `bpm` が 180 を超えるなら、全画面の明滅は 2 拍に 1 回にする）
