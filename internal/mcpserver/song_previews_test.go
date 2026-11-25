@@ -71,7 +71,9 @@ func TestVJSongPromptSteps(t *testing.T) {
 		// 拍と明滅と -link
 		"Beat", "Time", "more than 3 times per second", "set_bpm", "-link",
 		// 重さ
-		"below 50", "lighter")
+		"below 50", "lighter",
+		// 音（-audio）
+		"AudioBass", "AudioMid", "AudioHigh", "AudioOnset", "-audio", "all four are 0", "brightness of the whole screen")
 	for _, s := range []string{"Mood:", "Tempo:"} {
 		if strings.Contains(txt, s) {
 			t.Errorf("without arguments %q must not appear:\n%s", s, txt)

@@ -71,6 +71,21 @@ func TestGetStateWithoutLLMSlotsFlag(t *testing.T) {
 	wantContains(t, txt, "llm_slots: none", "features: keys, llm_slots, previews")
 }
 
+// features に audio があるとき（kagelife を -audio 付きで起動したとき）だけ audio: on と出す。
+func TestGetStateShowsAudioOn(t *testing.T) {
+	f, cs := setup(t)
+	f.with(func() { f.audio = true })
+	txt := mustOK(t, cs, "get_state", nil)
+	wantContains(t, txt, "features: audio, keys, llm_slots, previews",
+		"audio: on (AudioBass/AudioMid/AudioHigh/AudioOnset carry the venue sound)")
+}
+
+func TestGetStateShowsAudioOff(t *testing.T) {
+	_, cs := setup(t)
+	txt := mustOK(t, cs, "get_state", nil)
+	wantContains(t, txt, "audio: off (the four Audio* uniforms are 0; start kagelife with -audio <device>, see -list-audio)")
+}
+
 func TestGetStateLegacyGUI(t *testing.T) {
 	f, cs := setup(t)
 	f.with(func() { f.legacy = true })
