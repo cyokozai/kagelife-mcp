@@ -200,8 +200,20 @@ class ScriptTest(unittest.TestCase):
 
     def test_audio_line_without_audio_is_an_error(self):
         r = self.run_sh(START, "--no-nowplaying", "--audio-line")
-        self.assertEqual(r.returncode, 1)
+        self.assertEqual(r.returncode, 2)
         self.assertIn("--audio-line needs --audio", r.stderr)
+        self.assertFalse((self.cache / "kagelife.pid").exists())
+
+    def test_audio_empty_value_is_usage_error(self):
+        r = self.run_sh(START, "--no-nowplaying", "--audio", "")
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("--audio", r.stderr)
+        self.assertFalse((self.cache / "kagelife.pid").exists())
+
+    def test_audio_value_starting_with_dash_is_usage_error(self):
+        r = self.run_sh(START, "--no-nowplaying", "--audio", "--audio-line")
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("--audio", r.stderr)
         self.assertFalse((self.cache / "kagelife.pid").exists())
 
     def test_without_audio_no_audio_flag(self):

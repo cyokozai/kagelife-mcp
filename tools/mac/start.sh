@@ -65,7 +65,12 @@ while [ $# -gt 0 ]; do
     --mode) need_arg "$1" $#; mode=$2; shift 2 ;;
     --no-nowplaying) no_np_flag=1; shift ;;
     --no-llm-slots) no_llm_flag=1; shift ;;
-    --audio) need_arg "$1" $#; audio=$2; shift 2 ;;
+    --audio)
+      need_arg "$1" $#
+      case $2 in
+        ''|-*) echo "start.sh: --audio needs a device (default, a number or part of a name), got: '$2'" >&2; usage; exit 2 ;;
+      esac
+      audio=$2; shift 2 ;;
     --audio-line) audio_line=1; shift ;;
     -h|--help) usage; exit 0 ;;
     --) shift; break ;;
@@ -86,7 +91,9 @@ case $runner in
   *) die "start.sh: KAGELIFE_NOWPLAYING_RUNNER must be binary or docker (got: $runner)" ;;
 esac
 
-[ "$audio_line" = 0 ] || [ -n "$audio" ] || die "start.sh: --audio-line needs --audio DEV (or KAGELIFE_AUDIO)"
+if [ "$audio_line" = 1 ] && [ -z "$audio" ]; then
+  echo "start.sh: --audio-line needs --audio DEV (or KAGELIFE_AUDIO)" >&2; usage; exit 2
+fi
 [ -n "$shaders" ] || die "start.sh: give the shader folder with --shaders DIR or KAGELIFE_SHADERS"
 [ -d "$shaders" ] || die "start.sh: shader folder not found: $shaders"
 command -v "$bin" >/dev/null 2>&1 || die "start.sh: kagelife not found: $bin (use --kagelife PATH or KAGELIFE_BIN)"
