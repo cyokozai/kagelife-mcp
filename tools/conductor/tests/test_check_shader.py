@@ -15,6 +15,9 @@ HERE = Path(__file__).resolve().parent
 TOOL = HERE.parent
 SH = TOOL / "check_shader.sh"
 
+sys.path.insert(0, str(TOOL))
+import check_shader  # noqa: E402
+
 GOOD = """//kage:unit pixels
 
 package main
@@ -160,6 +163,15 @@ class Uniforms(unittest.TestCase):
         rc, rep = run_json(with_body(decls=decls))
         self.assertEqual(codes(rep, "error"), [])
         self.assertEqual(sorted(rep["uniforms"]), ["AudioBass", "AudioHigh", "AudioMid", "AudioOnset"])
+
+    def test_scan_takes_an_allowed_table(self):
+        code = with_body(decls="var AudioBass float\n")
+        rep = check_shader.Report()
+        check_shader.scan(code, rep, uniforms=check_shader.BASE_UNIFORMS)
+        self.assertIn("unknown_uniform", [f["code"] for f in rep.findings])
+        rep = check_shader.Report()
+        check_shader.scan(code, rep)
+        self.assertEqual(rep.findings, [])
 
     def test_audio_uniform_wrong_type(self):
         rc, rep = run_json(with_body(decls="var AudioBass vec2\n"))

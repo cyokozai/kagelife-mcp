@@ -106,12 +106,7 @@ def shaders_repo_problems(text):
         problems.append("%s is not in the first %d lines" % (DIRECTIVE, DIRECTIVE_LINES))
     rep = check_shader.Report()
     # kagelife-shaders の shaders_test.go は今も 6 つだけを許す（音の 4 つは未対応）ので、ここでは 6 つで見る。
-    full = check_shader.UNIFORMS
-    check_shader.UNIFORMS = check_shader.BASE_UNIFORMS
-    try:
-        check_shader.scan(check_shader.strip_comments(text.replace("\r\n", "\n")), rep)
-    finally:
-        check_shader.UNIFORMS = full
+    check_shader.scan(check_shader.strip_comments(text.replace("\r\n", "\n")), rep, uniforms=check_shader.BASE_UNIFORMS)
     for f in rep.findings:
         if f["code"] in UNIFORM_CODES:
             problems.append("line %s: %s" % (f["line"], f["message"]))
