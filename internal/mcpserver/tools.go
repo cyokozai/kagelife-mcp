@@ -224,9 +224,12 @@ func formatState(s stateResp) string {
 	}
 	fmt.Fprintf(&b, "llm_slots: %s\n", formatSlots(s))
 	fmt.Fprintf(&b, "features: %s\n", orNone(strings.Join(s.Features, ", ")))
-	if slices.Contains(s.Features, featureAudio) {
+	switch {
+	case len(s.Features) == 0:
+		// features を返さない古い GUI は、音に対応しているか分からないので何も言わない。
+	case slices.Contains(s.Features, featureAudio):
 		b.WriteString("audio: on (AudioBass/AudioMid/AudioHigh/AudioOnset carry the venue sound)\n")
-	} else {
+	default:
 		b.WriteString("audio: off (the four Audio* uniforms are 0; start kagelife with -audio <device>, see -list-audio)\n")
 	}
 	fmt.Fprintf(&b, "fps: %s\n", fmtNum(s.FPS))

@@ -91,6 +91,10 @@ func TestGetStateLegacyGUI(t *testing.T) {
 	f.with(func() { f.legacy = true })
 	txt := mustOK(t, cs, "get_state", nil)
 	wantContains(t, txt, "llm_slots: none", "features: none", "active: 01_uv")
+	// features を返さない古い GUI では、audio の有無は分からないので audio: の行を出さない。
+	if strings.Contains(txt, "audio:") {
+		t.Errorf("legacy GUI must not get an audio: line:\n%s", txt)
+	}
 }
 
 // ── write_back_slot の選び方 ───────────────────────────────
